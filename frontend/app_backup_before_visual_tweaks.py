@@ -268,17 +268,13 @@ with tab1:
     col_a.plotly_chart(fig_shop, use_container_width=True)
 
     fig_dist = px.histogram(
-    batch_df.sample(min(10000, len(batch_df)), random_state=42),
-    x="prediction",
-    nbins=30,
-    title="Distribución de pronósticos",
-    labels={"prediction": "Unidades pronosticadas"},
-)
+        batch_df.sample(min(10000, len(batch_df)), random_state=42),
+        x="prediction",
+        nbins=30,
+        title="Distribución de pronósticos",
+        labels={"prediction": "Unidades pronosticadas"},
+    )
     col_b.plotly_chart(fig_dist, use_container_width=True)
-    col_b.caption(
-        "La mayoría de los pares tienda-producto tienen demanda esperada baja. "
-        "Los valores altos aparecen en pocos productos, lo cual es común en catálogos grandes."
-)
 
 with tab2:
     st.header("Inferencia individual")
@@ -357,7 +353,7 @@ with tab3:
 
     csv = filtered_batch.to_csv(index=False).encode("utf-8")
     st.download_button(
-        "Descargar archivo CFO",
+        "Generar y descargar archivo CFO",
         data=csv,
         file_name="forecast_cfo_next_month.csv",
         mime="text/csv",
@@ -371,7 +367,7 @@ with tab3:
         "de features del modelo. Esto permite probar inferencia batch sobre un input nuevo."
     )
 
-    uploaded_file = st.file_uploader("Subir CSV", type=["csv"])
+    uploaded_file = st.file_uploader("Subir CSV para inferencia batch", type=["csv"])
 
     if uploaded_file is not None:
         uploaded_df = pd.read_csv(uploaded_file)
@@ -390,7 +386,7 @@ with tab3:
 
                 uploaded_csv = uploaded_predictions.to_csv(index=False).encode("utf-8")
                 st.download_button(
-                    "Descargar predicciones",
+                    "Descargar predicciones del archivo cargado",
                     data=uploaded_csv,
                     file_name="uploaded_batch_predictions.csv",
                     mime="text/csv",
@@ -482,70 +478,23 @@ with tab5:
     )
 
     col1, col2 = st.columns(2)
-    
-    top_shops_error_plot = by_shop.head(15).copy()
-    top_shops_error_plot["shop_id_label"] = top_shops_error_plot["shop_id"].astype(str)
-    
+
     fig_shop_error = px.bar(
-        top_shops_error_plot.sort_values("mae", ascending=True),
-        x="mae",
-        y="shop_id_label",
-        orientation="h",
+        by_shop.head(15),
+        x="shop_id",
+        y="mae",
         title="Top tiendas por error promedio",
-        labels={
-            "mae": "MAE",
-            "shop_id_label": "Tienda",
-            "n": "Observaciones",
-            "y_mean": "Venta real promedio",
-            "pred_mean": "Predicción promedio",
-        },
-        hover_data={
-            "shop_id_label": True,
-            "mae": ":.4f",
-            "n": True,
-            "y_mean": ":.4f",
-            "pred_mean": ":.4f",
-        },
+        labels={"shop_id": "Tienda", "mae": "MAE"},
     )
-    fig_shop_error.update_layout(yaxis={"categoryorder": "total ascending"})
     col1.plotly_chart(fig_shop_error, use_container_width=True)
 
-    top_items_plot = by_item.head(15).copy()
-    top_items_plot["item_id_label"] = "Producto " + top_items_plot["item_id"].astype(str)
-    top_items_plot = top_items_plot.sort_values("mae", ascending=True)
-
     fig_item_error = px.bar(
-        top_items_plot,
-        x="mae",
-        y="item_id_label",
-        orientation="h",
+        by_item.head(15),
+        x="item_id",
+        y="mae",
         title="Top productos por error promedio",
-        text="mae",
-        labels={
-            "mae": "MAE",
-            "item_id_label": "Producto",
-        },
-        custom_data=["item_id", "n", "y_mean", "pred_mean", "mae"],
+        labels={"item_id": "Producto", "mae": "MAE"},
     )
-
-    fig_item_error.update_traces(
-        texttemplate="%{text:.2f}",
-        textposition="outside",
-        hovertemplate=(
-            "<b>Producto:</b> %{customdata[0]}<br>"
-            "<b>MAE:</b> %{customdata[4]:.4f}<br>"
-            "<b>Observaciones:</b> %{customdata[1]}<br>"
-            "<b>Venta real promedio:</b> %{customdata[2]:.4f}<br>"
-            "<b>Predicción promedio:</b> %{customdata[3]:.4f}"
-            "<extra></extra>"
-        ),
-    )
-
-    fig_item_error.update_layout(
-        yaxis={"categoryorder": "total ascending"},
-        margin={"l": 120, "r": 40, "t": 60, "b": 40},
-    )
-
     col2.plotly_chart(fig_item_error, use_container_width=True)
 
     st.subheader("Error por tienda")
