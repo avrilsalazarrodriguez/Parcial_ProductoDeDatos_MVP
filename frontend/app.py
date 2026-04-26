@@ -23,6 +23,12 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from backend.db import (
+    insert_business_feedback,
+    read_business_feedback,
+    read_problem_products,
+)
+
 
 # Aqui definimos rutas reales del repositorio.
 MODEL_PATH = Path("artifacts/model.joblib")
@@ -566,33 +572,60 @@ with tab6:
     st.header("Feedback de negocio")
 
     st.write(
-        "Esta vista permite capturar observaciones de analistas sobre productos o tiendas "
-        "con comportamiento extraño. En la versión AWS se guardará en RDS."
+        "Esta vista captura observaciones del equipo de negocio y las guarda en RDS. "
+        "También muestra productos que el modelo marcó como candidatos a revisión."
     )
 
-    shop_id = st.number_input("shop_id", min_value=0, step=1)
-    item_id = st.number_input("item_id", min_value=0, step=1)
+    st.subheader("Registrar nueva observación")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        shop_id = st.number_input("shop_id", min_value=0, step=1)
+
+    with col2:
+        item_id = st.number_input("item_id", min_value=0, step=1)
+
     issue_type = st.selectbox(
         "Tipo de observación",
         ["Predicción muy alta", "Predicción muy baja", "Producto descontinuado", "Otro"],
     )
+
+    analyst_name = st.text_input("Nombre del analista", value="")
     comment = st.text_area("Comentario del analista")
 
-    if st.button("Registrar observación"):
-        st.success("Observación capturada en la UI. Siguiente paso: persistir en RDS.")
-        st.write(
-            {
-                "shop_id": shop_id,
-                "item_id": item_id,
-                "issue_type": issue_type,
-                "comment": comment,
-            }
-        )
+    if st.button("Guardar feedback en RDS"):
+        try:
+            insert_business_feedback(
+                shop_id=int(shop_id),
+                item_id=int(item_id),
+                issue_type=issue_type,
+                comment=comment,
+                analyst_name=analyst_name or None,
+            )
+            st.success("Feedback guardado correctamente en RDS.")
+        except Exception as exc:
+            st.error(f"No se pudo guardar el feedback: {exc}")
+
+    st.divider()
+
+    st.subheader("Feedback capturado")
+
+    try:
+        feedback_df = read_business_feedback(limit=100)
+        if feedback_df.empty:
+            st.info("Todavía no hay observaciones guardadas.")
+        else:
+            st.dataframe(feedback_df, use_container_width=True)
+    except Exception as exc:
+        st.warning(f"No se pudo leer feedback desde RDS: {exc}")
+
+    st.divider()
 
     st.subheader("Productos sugeridos para revisión")
-    review_candidates = (
-        eval_df.sort_values("abs_error", ascending=False)
-        [["shop_id", "item_id", "y", "prediction", "abs_error"]]
-        .head(25)
-    )
-    st.dataframe(review_candidates, use_container_width=True)
+
+    try:
+        problem_df = read_problem_products(limit=100)
+        st.dataframe(problem_df, use_container_width=True)
+    except Exception as exc:
+        st.warning(f"No se pudo leer problem_products desde RDS: {exc}")
