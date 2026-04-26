@@ -2,8 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Dejamos /app en el PYTHONPATH para que Streamlit pueda importar backend/ y src/.
+ENV PYTHONPATH=/app
+
 # Instalamos curl para que ECS pueda revisar el healthcheck de Streamlit.
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y curl libgomp1 && rm -rf /var/lib/apt/lists/*
 
 # Copiamos las dependencias para aprovechar cache de Docker.
 COPY frontend/requirements.txt ./frontend/requirements.txt
@@ -36,4 +39,9 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 CMD ["streamlit", "run", "frontend/app.py", \
      "--server.address=0.0.0.0", \
      "--server.port=8501", \
-     "--server.headless=true"]
+     "--server.headless=true", \
+     "--server.enableCORS=false", \
+     "--server.enableXsrfProtection=false", \
+     "--browser.gatherUsageStats=false"]
+
+
