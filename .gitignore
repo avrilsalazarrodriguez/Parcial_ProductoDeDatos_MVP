@@ -26,3 +26,9 @@ data/raw/
 data/prep/train.parquet
 tmp/
 tree.txt
+
+# ModelOps generated/local outputs
+modelops_source.zip
+modelops_outputs.env
+data/incoming/
+data/modelops/
