@@ -6,3 +6,11 @@ artifacts/model.joblib
 artifacts/logs/
 .DS_Store
 .DS_Store
+
+# Jupyter/SageMaker checkpoints
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+
+# Python cache
+__pycache__/
+*.pyc
