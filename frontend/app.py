@@ -29,6 +29,8 @@ from backend.db import (
     read_problem_products,
     insert_batch_export,
     read_batch_exports,
+    insert_usage_event,
+    read_usage_events,
 )
 
 from backend.storage import upload_batch_dataframe_to_s3
@@ -327,7 +329,15 @@ with tab2:
         selected_features = test_features.iloc[[selected_index]]
 
         pred = predict_with_model(model_payload, selected_features)[0]
-
+        insert_usage_event(
+            event_type="single_inference",
+            shop_id=int(selected_shop),
+            item_id=int(selected_item),
+            records_count=1,
+            status="success",
+            message="Inferencia individual ejecutada correctamente.",
+        )
+        
         st.metric("Pronóstico próximo mes", f"{pred:.2f} unidades")
 
         with st.expander("Ver features usadas por el modelo"):
@@ -435,6 +445,12 @@ with tab3:
                     test_features,
                     model_payload,
                 )
+                insert_usage_event(
+                    event_type="uploaded_batch_inference",
+                    records_count=len(uploaded_predictions),
+                    status="success",
+                    message="Archivo cargado predicho correctamente.",
+                )
                 st.success("Predicciones generadas correctamente.")
                 st.dataframe(uploaded_predictions.head(100), use_container_width=True)
 
@@ -446,6 +462,12 @@ with tab3:
                     mime="text/csv",
                 )
             except ValueError as exc:
+                insert_usage_event(
+                    event_type="uploaded_batch_inference",
+                    records_count=len(uploaded_df),
+                    status="error",
+                    message=str(exc),
+                )
                 st.error(str(exc))
 
 with tab4:
