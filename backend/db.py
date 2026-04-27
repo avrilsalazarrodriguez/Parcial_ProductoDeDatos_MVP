@@ -172,3 +172,54 @@ def read_batch_exports(limit: int = 50) -> pd.DataFrame:
         LIMIT {int(limit)}
     """
     return pd.read_sql(query, get_engine())
+
+
+def insert_usage_event(
+    event_type: str,
+    shop_id: int | None = None,
+    item_id: int | None = None,
+    records_count: int | None = None,
+    status: str = "success",
+    message: str | None = None,
+) -> None:
+    """Registra eventos de uso de la app para monitoreo operacional."""
+    query = text(
+        """
+        INSERT INTO app_usage_events
+            (event_type, shop_id, item_id, records_count, status, message)
+        VALUES
+            (:event_type, :shop_id, :item_id, :records_count, :status, :message)
+        """
+    )
+
+    with get_engine().begin() as connection:
+        connection.execute(
+            query,
+            {
+                "event_type": event_type,
+                "shop_id": shop_id,
+                "item_id": item_id,
+                "records_count": records_count,
+                "status": status,
+                "message": message,
+            },
+        )
+
+
+def read_usage_events(limit: int = 100) -> pd.DataFrame:
+    """Lee eventos recientes de uso de la app."""
+    query = f"""
+        SELECT
+            event_id,
+            event_type,
+            shop_id,
+            item_id,
+            records_count,
+            status,
+            message,
+            created_at
+        FROM app_usage_events
+        ORDER BY created_at DESC
+        LIMIT {int(limit)}
+    """
+    return pd.read_sql(query, get_engine())
