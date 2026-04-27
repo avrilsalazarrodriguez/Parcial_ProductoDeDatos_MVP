@@ -27,7 +27,11 @@ from backend.db import (
     insert_business_feedback,
     read_business_feedback,
     read_problem_products,
+    insert_batch_export,
+    read_batch_exports,
 )
+
+from backend.storage import upload_batch_dataframe_to_s3
 
 
 # Aqui definimos rutas reales del repositorio.
@@ -274,17 +278,17 @@ with tab1:
     col_a.plotly_chart(fig_shop, use_container_width=True)
 
     fig_dist = px.histogram(
-    batch_df.sample(min(10000, len(batch_df)), random_state=42),
-    x="prediction",
-    nbins=30,
-    title="Distribución de pronósticos",
-    labels={"prediction": "Unidades pronosticadas"},
-)
+        batch_df.sample(min(10000, len(batch_df)), random_state=42),
+        x="prediction",
+        nbins=30,
+        title="Distribución de pronósticos",
+        labels={"prediction": "Unidades pronosticadas"},
+    )
     col_b.plotly_chart(fig_dist, use_container_width=True)
     col_b.caption(
         "La mayoría de los pares tienda-producto tienen demanda esperada baja. "
         "Los valores altos aparecen en pocos productos, lo cual es común en catálogos grandes."
-)
+    )
 
 with tab2:
     st.header("Inferencia individual")
@@ -344,15 +348,19 @@ with tab3:
         horizontal=True,
     )
 
-    selected_shop_batch: str | int = "Todas"
     if scope == "Todos los productos de una tienda":
         selected_shop_batch = st.selectbox(
             "Selecciona tienda",
             options=sorted(batch_df["shop_id"].unique().tolist()),
             key="batch_shop_selector",
         )
-
-    filtered_batch = filter_batch(batch_df, selected_shop_batch, scope)
+        
+        filtered_batch = batch_df.query("shop_id == @selected_shop_batch").copy()
+        st.caption(f"Mostrando pronósticos de la tienda {selected_shop_batch}.")
+    else:
+        selected_shop_batch = None
+        filtered_batch = batch_df.copy()
+        st.caption("Mostrando pronósticos del catálogo completo.")
 
     col1, col2, col3 = st.columns(3)
     col1.metric("Registros del archivo", f"{len(filtered_batch):,}")
@@ -362,12 +370,48 @@ with tab3:
     st.dataframe(filtered_batch.head(1000), use_container_width=True)
 
     csv = filtered_batch.to_csv(index=False).encode("utf-8")
+    
+    # Este botón cubre el flujo operativo del CFO:
+    # genera el archivo, lo guarda en S3 y muestra la ruta persistente.
+    if st.button("Generar archivo CFO y guardar en S3"):
+        shop_for_s3 = (
+            int(selected_shop_batch)
+            if scope == "Todos los productos de una tienda"
+            else None
+        )
+        
+        s3_uri = upload_batch_dataframe_to_s3(
+            df=filtered_batch,
+            scope=scope,
+            shop_id=shop_for_s3,
+        )
+        
+        # Registramos el archivo en RDS para dejar historial operacional.
+        insert_batch_export(
+            scope=scope,
+            shop_id=shop_for_s3,
+            records_count=len(filtered_batch),
+            total_prediction=float(filtered_batch["prediction"].sum()),
+            s3_uri=s3_uri,
+        )
+        
+        st.success("Archivo CFO generado, guardado en S3 y registrado en RDS.")
+        st.code(s3_uri)
+        
     st.download_button(
         "Descargar archivo CFO",
         data=csv,
         file_name="forecast_cfo_next_month.csv",
         mime="text/csv",
     )
+
+    st.subheader("Historial de archivos generados")
+    
+    try:
+        batch_exports = read_batch_exports(limit=20)
+        st.dataframe(batch_exports, use_container_width=True)
+    except Exception as exc:
+        st.warning(f"No se pudo leer el historial de batch_exports: {exc}")
 
     st.divider()
 
