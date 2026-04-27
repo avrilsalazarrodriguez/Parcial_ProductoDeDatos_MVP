@@ -1,0 +1,169 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "ModelOps automation with CodeBuild and EventBridge"
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: pfs-modelops
+
+  ModelBucket:
+    Type: String
+    Description: S3 bucket produced by the pfs-modelops stack
+
+  SageMakerRoleArn:
+    Type: String
+    Description: SageMaker execution role ARN from the pfs-modelops stack
+
+  GlueCrawlerName:
+    Type: String
+    Description: Glue crawler name from the pfs-modelops stack
+
+  CodeZipKey:
+    Type: String
+    Default: code/modelops_source.zip
+    Description: S3 key of the zipped repo source for CodeBuild
+
+  ScheduleExpression:
+    Type: String
+    Default: rate(7 days)
+    Description: EventBridge schedule expression. Rule is created DISABLED by default.
+
+  InstanceType:
+    Type: String
+    Default: ml.m5.xlarge
+    Description: SageMaker Processing instance type used by scheduled runs
+
+Resources:
+  ModelOpsCodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-codebuild-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${ProjectName}-codebuild-policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::${ModelBucket}"
+
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource:
+                  - !Sub "arn:aws:s3:::${ModelBucket}/*"
+
+              - Effect: Allow
+                Action:
+                  - sagemaker:CreateProcessingJob
+                  - sagemaker:DescribeProcessingJob
+                  - sagemaker:StopProcessingJob
+                  - sagemaker:ListProcessingJobs
+                Resource: "*"
+
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource: !Ref SageMakerRoleArn
+
+              - Effect: Allow
+                Action:
+                  - glue:StartCrawler
+                  - glue:GetCrawler
+                  - glue:GetTables
+                  - glue:GetDatabase
+                Resource: "*"
+
+  ModelOpsCodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${ProjectName}-automation"
+      Description: "Runs the ModelOps retraining/scoring flow"
+      ServiceRole: !GetAtt ModelOpsCodeBuildRole.Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Source:
+        Type: S3
+        Location: !Sub "${ModelBucket}/${CodeZipKey}"
+        BuildSpec: buildspec-modelops.yml
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_MEDIUM
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - Name: MODEL_BUCKET
+            Type: PLAINTEXT
+            Value: !Ref ModelBucket
+          - Name: SAGEMAKER_ROLE_ARN
+            Type: PLAINTEXT
+            Value: !Ref SageMakerRoleArn
+          - Name: GLUE_CRAWLER_NAME
+            Type: PLAINTEXT
+            Value: !Ref GlueCrawlerName
+          - Name: INSTANCE_TYPE
+            Type: PLAINTEXT
+            Value: !Ref InstanceType
+
+  EventBridgeCodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-eventbridge-codebuild-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${ProjectName}-eventbridge-codebuild-policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                Resource: !GetAtt ModelOpsCodeBuildProject.Arn
+
+  ScheduledModelOpsRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${ProjectName}-scheduled-retraining"
+      Description: "Scheduled ModelOps retraining/scoring cycle"
+      ScheduleExpression: !Ref ScheduleExpression
+      State: DISABLED
+      Targets:
+        - Id: ModelOpsCodeBuildTarget
+          Arn: !GetAtt ModelOpsCodeBuildProject.Arn
+          RoleArn: !GetAtt EventBridgeCodeBuildRole.Arn
+
+Outputs:
+  CodeBuildProjectName:
+    Description: CodeBuild project that runs the ModelOps cycle
+    Value: !Ref ModelOpsCodeBuildProject
+
+  ScheduledRuleName:
+    Description: Disabled EventBridge rule for scheduled retraining
+    Value: !Ref ScheduledModelOpsRule
+
+  CodeZipUri:
+    Description: Source zip location expected by CodeBuild
+    Value: !Sub "s3://${ModelBucket}/${CodeZipKey}"

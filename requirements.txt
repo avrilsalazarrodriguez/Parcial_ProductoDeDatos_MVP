@@ -1,0 +1,6 @@
+pandas
+pyarrow
+scikit-learn
+joblib
+boto3
+typing

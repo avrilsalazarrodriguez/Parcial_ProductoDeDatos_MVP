@@ -1,0 +1,675 @@
+"""
+Aplicación Streamlit para el MVP de pronóstico de ventas de 1C Company.
+
+Esta app reutiliza los artefactos construidos en las tareas 1 a 7:
+- artifacts/model.joblib
+- data/prep/valid.parquet
+- data/prep/test_features.parquet
+- data/prep/test_pairs.parquet
+- data/predictions/submission.csv
+
+La primera versión corre con archivos locales para validar la UI.
+
+Después se conectará a RDS y Secrets Manager para cumplir la arquitectura final.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import joblib
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import streamlit as st
+
+from backend.db import (
+    insert_business_feedback,
+    read_business_feedback,
+    read_problem_products,
+    insert_batch_export,
+    read_batch_exports,
+)
+
+from backend.storage import upload_batch_dataframe_to_s3
+
+
+# Aqui definimos rutas reales del repositorio.
+MODEL_PATH = Path("artifacts/model.joblib")
+VALID_PATH = Path("data/prep/valid.parquet")
+TEST_FEATURES_PATH = Path("data/prep/test_features.parquet")
+TEST_PAIRS_PATH = Path("data/prep/test_pairs.parquet")
+SUBMISSION_PATH = Path("data/predictions/submission.csv")
+
+
+@st.cache_data
+def load_valid_data() -> pd.DataFrame:
+    """Aqui cargamos el conjunto de validación con ground truth real."""
+    return pd.read_parquet(VALID_PATH)
+
+
+@st.cache_data
+def load_test_features() -> pd.DataFrame:
+    """Aqui cargamos features del mes futuro que usará la app."""
+    return pd.read_parquet(TEST_FEATURES_PATH)
+
+
+@st.cache_data
+def load_test_pairs() -> pd.DataFrame:
+    """Aqui cargamos los pares tienda-producto asociados al test."""
+    return pd.read_parquet(TEST_PAIRS_PATH)
+
+
+@st.cache_data
+def load_submission() -> pd.DataFrame:
+    """Aqui cargamos las predicciones batch ya generadas por el pipeline previo."""
+    return pd.read_csv(SUBMISSION_PATH)
+
+
+@st.cache_resource
+def load_model() -> dict:
+    """Aqui cargamos el modelo entrenado una sola vez para inferencia individual."""
+    return joblib.load(MODEL_PATH)
+
+
+def predict_with_model(model_payload: dict, features: pd.DataFrame) -> np.ndarray:
+    """
+    Aqui ejecutamos inferencia usando el modelo existente de dos etapas.
+
+    - clasificador para probabilidad de venta
+    - regresor para unidades condicionadas a venta
+    """
+    bundle = model_payload["bundle"]
+    feature_cols = bundle["feature_cols"]
+
+    x_test = features[feature_cols]
+    prob = bundle["clf"].predict_proba(x_test)[:, 1].astype(np.float32)
+    mu = bundle["reg"].predict(x_test).astype(np.float32)
+
+    # Aqui limitamos al rango usado en el entrenamiento del proyecto.
+    return np.clip(prob * mu, 0, 20)
+
+
+def build_evaluation_sample(
+    valid_df: pd.DataFrame,
+    model_payload: dict,
+    n: int = 5000,
+) -> pd.DataFrame:
+    """
+    Generamos una muestra de evaluación para comparar predicción vs ground truth.
+
+    Usamos una muestra para que la app responda rápido.
+    """
+    sample = valid_df.sample(min(n, len(valid_df)), random_state=42).copy()
+    sample["prediction"] = predict_with_model(model_payload, sample)
+    sample["error"] = sample["prediction"] - sample["y"]
+    sample["abs_error"] = sample["error"].abs()
+
+    if "cnt_lag_1" in sample.columns:
+        sample["naive_prediction"] = sample["cnt_lag_1"].clip(0, 20)
+    else:
+        sample["naive_prediction"] = 0.0
+
+    # Esta regla identifica productos con baja actividad reciente.
+    # La usamos para explicar qué productos podrían no requerir pronóstico operativo.
+    if "dead_6" in sample.columns:
+        sample["low_activity_flag"] = sample["dead_6"].astype(int)
+    else:
+        sample["low_activity_flag"] = 0
+
+    return sample
+
+
+def build_batch_table(test_pairs: pd.DataFrame, submission: pd.DataFrame) -> pd.DataFrame:
+    """Unimos los pares tienda-producto con las predicciones precomputadas."""
+    batch_df = test_pairs.copy()
+    batch_df["prediction"] = submission.iloc[:, -1].values
+    batch_df["prediction"] = batch_df["prediction"].clip(0, 20)
+    return batch_df
+
+
+def rmse(y_true: pd.Series, y_pred: pd.Series) -> float:
+    """Calculamos RMSE para reportar el error del modelo."""
+    return float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
+
+
+def mae(y_true: pd.Series, y_pred: pd.Series) -> float:
+    """Calculamos MAE para explicar el error promedio en unidades."""
+    return float(np.mean(np.abs(y_true - y_pred)))
+
+
+def naive_prediction(valid_df: pd.DataFrame) -> pd.Series:
+    """
+    Construimos un baseline naive simple.
+
+    Para este MVP usamos cnt_lag_1 como predicción naive:
+    lo que se vendió el mes anterior se usa como pronóstico del mes actual.
+    """
+    if "cnt_lag_1" not in valid_df.columns:
+        return pd.Series(np.zeros(len(valid_df)), index=valid_df.index)
+    return valid_df["cnt_lag_1"].clip(0, 20)
+
+
+def filter_batch(
+    batch_df: pd.DataFrame,
+    selected_shop: str | int,
+    scope: str,
+) -> pd.DataFrame:
+    """Filtramos el batch por tienda o catálogo completo."""
+    filtered = batch_df.copy()
+
+    if scope == "Todos los productos de una tienda" and selected_shop != "Todas":
+        filtered = filtered.query("shop_id == @selected_shop")
+
+    return filtered
+
+
+def build_uploaded_batch(
+    uploaded_df: pd.DataFrame,
+    test_features: pd.DataFrame,
+    model_payload: dict,
+) -> pd.DataFrame:
+    """
+    Ejecutamos inferencia para un archivo subido por el usuario.
+
+    El archivo debe traer columnas compatibles con las features del modelo.
+    Para mantener el MVP simple, validamos que existan las columnas necesarias.
+    """
+    bundle = model_payload["bundle"]
+    feature_cols = bundle["feature_cols"]
+
+    missing_cols = [col for col in feature_cols if col not in uploaded_df.columns]
+    if missing_cols:
+        raise ValueError(
+            "El archivo no tiene todas las columnas requeridas por el modelo: "
+            + ", ".join(missing_cols[:10])
+        )
+
+    result = uploaded_df.copy()
+    result["prediction"] = predict_with_model(model_payload, result)
+    return result
+
+
+st.set_page_config(
+    page_title="1C Company - Pronóstico de Ventas",
+    page_icon="📦",
+    layout="wide",
+)
+
+st.title("📦 Producto de Datos — Pronóstico de Ventas")
+st.caption(
+    "MVP Streamlit para consultar pronósticos mensuales, evaluar el modelo "
+    "y capturar feedback del negocio."
+)
+
+# Aqui cargamos los datos principales de la app.
+valid_df = load_valid_data()
+test_features = load_test_features()
+test_pairs = load_test_pairs()
+submission = load_submission()
+model_payload = load_model()
+
+batch_df = build_batch_table(test_pairs, submission)
+eval_df = build_evaluation_sample(valid_df, model_payload)
+
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+    [
+        "Resumen",
+        "Inferencia individual",
+        "Batch CFO",
+        "Evaluación",
+        "KPIs",
+        "Feedback",
+    ]
+)
+
+with tab1:
+    st.header("Resumen ejecutivo")
+
+    st.write(
+        "Esta aplicación permite consultar pronósticos mensuales de ventas por tienda "
+        "y producto, revisar errores del modelo contra datos reales y registrar "
+        "observaciones del negocio para análisis posterior."
+    )
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    col1.metric(
+        "Filas de validación",
+        f"{len(valid_df):,}",
+        help="Registros con valor real conocido. Se usan para evaluar el modelo.",
+    )
+    col2.metric(
+        "Pares tienda-producto",
+        f"{len(test_pairs):,}",
+        help="Combinaciones shop_id + item_id para el mes futuro a pronosticar.",
+    )
+    col3.metric(
+        "Predicciones batch",
+        f"{len(submission):,}",
+        help="Pronósticos ya generados por el pipeline previo.",
+    )
+    col4.metric(
+        "Modelo en uso",
+        "LightGBM 2 etapas",
+        help="Clasificador de venta + regresor de unidades vendidas.",
+    )
+
+    st.subheader("Muestra de pronósticos disponibles")
+    st.dataframe(batch_df.head(20), use_container_width=True)
+
+    st.subheader("Dashboard rápido")
+    col_a, col_b = st.columns(2)
+
+    top_shops = (
+        batch_df.groupby("shop_id", as_index=False)
+        .agg(total_forecast=("prediction", "sum"))
+        .sort_values("total_forecast", ascending=False)
+        .head(15)
+    )
+
+    fig_shop = px.bar(
+        top_shops,
+        x="shop_id",
+        y="total_forecast",
+        title="Tiendas con mayor pronóstico total",
+        labels={"shop_id": "Tienda", "total_forecast": "Unidades pronosticadas"},
+    )
+    col_a.plotly_chart(fig_shop, use_container_width=True)
+
+    fig_dist = px.histogram(
+        batch_df.sample(min(10000, len(batch_df)), random_state=42),
+        x="prediction",
+        nbins=30,
+        title="Distribución de pronósticos",
+        labels={"prediction": "Unidades pronosticadas"},
+    )
+    col_b.plotly_chart(fig_dist, use_container_width=True)
+    col_b.caption(
+        "La mayoría de los pares tienda-producto tienen demanda esperada baja. "
+        "Los valores altos aparecen en pocos productos, lo cual es común en catálogos grandes."
+    )
+
+with tab2:
+    st.header("Inferencia individual")
+
+    st.write(
+        "Selecciona una tienda y un producto del conjunto futuro. "
+        "La app carga el modelo serializado con cache y calcula el pronóstico en el momento."
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        selected_shop = st.selectbox(
+            "Tienda",
+            options=sorted(test_pairs["shop_id"].unique().tolist()),
+        )
+
+    available_items = (
+        test_pairs.query("shop_id == @selected_shop")["item_id"]
+        .sort_values()
+        .unique()
+        .tolist()
+    )
+
+    with col2:
+        selected_item = st.selectbox("Producto", options=available_items)
+
+    selected_rows = test_pairs.query(
+        "shop_id == @selected_shop and item_id == @selected_item"
+    )
+
+    if selected_rows.empty:
+        st.warning("No se encontró ese par tienda-producto en el conjunto futuro.")
+    else:
+        selected_index = selected_rows.index[0]
+        selected_features = test_features.iloc[[selected_index]]
+
+        pred = predict_with_model(model_payload, selected_features)[0]
+
+        st.metric("Pronóstico próximo mes", f"{pred:.2f} unidades")
+
+        with st.expander("Ver features usadas por el modelo"):
+            st.dataframe(selected_features, use_container_width=True)
+
+with tab3:
+    st.header("Batch CFO")
+
+    st.write(
+        "Esta vista cubre el caso del CFO: generar un archivo con pronósticos del "
+        "mes siguiente para una tienda o para todo el catálogo. En la versión AWS, "
+        "este archivo también se guardará en S3."
+    )
+
+    scope = st.radio(
+        "Alcance del archivo",
+        ["Todos los productos de una tienda", "Catálogo completo"],
+        horizontal=True,
+    )
+
+    if scope == "Todos los productos de una tienda":
+        selected_shop_batch = st.selectbox(
+            "Selecciona tienda",
+            options=sorted(batch_df["shop_id"].unique().tolist()),
+            key="batch_shop_selector",
+        )
+        
+        filtered_batch = batch_df.query("shop_id == @selected_shop_batch").copy()
+        st.caption(f"Mostrando pronósticos de la tienda {selected_shop_batch}.")
+    else:
+        selected_shop_batch = None
+        filtered_batch = batch_df.copy()
+        st.caption("Mostrando pronósticos del catálogo completo.")
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Registros del archivo", f"{len(filtered_batch):,}")
+    col2.metric("Pronóstico total", f"{filtered_batch['prediction'].sum():,.1f}")
+    col3.metric("Promedio por producto", f"{filtered_batch['prediction'].mean():.3f}")
+
+    st.dataframe(filtered_batch.head(1000), use_container_width=True)
+
+    csv = filtered_batch.to_csv(index=False).encode("utf-8")
+    
+    # Este botón cubre el flujo operativo del CFO:
+    # genera el archivo, lo guarda en S3 y muestra la ruta persistente.
+    if st.button("Generar archivo CFO y guardar en S3"):
+        shop_for_s3 = (
+            int(selected_shop_batch)
+            if scope == "Todos los productos de una tienda"
+            else None
+        )
+        
+        s3_uri = upload_batch_dataframe_to_s3(
+            df=filtered_batch,
+            scope=scope,
+            shop_id=shop_for_s3,
+        )
+        
+        # Registramos el archivo en RDS para dejar historial operacional.
+        insert_batch_export(
+            scope=scope,
+            shop_id=shop_for_s3,
+            records_count=len(filtered_batch),
+            total_prediction=float(filtered_batch["prediction"].sum()),
+            s3_uri=s3_uri,
+        )
+        
+        st.success("Archivo CFO generado, guardado en S3 y registrado en RDS.")
+        st.code(s3_uri)
+        
+    st.download_button(
+        "Descargar archivo CFO",
+        data=csv,
+        file_name="forecast_cfo_next_month.csv",
+        mime="text/csv",
+    )
+
+    st.subheader("Historial de archivos generados")
+    
+    try:
+        batch_exports = read_batch_exports(limit=20)
+        st.dataframe(batch_exports, use_container_width=True)
+    except Exception as exc:
+        st.warning(f"No se pudo leer el historial de batch_exports: {exc}")
+
+    st.divider()
+
+    st.subheader("Batch por archivo cargado")
+    st.write(
+        "Opcionalmente, el usuario puede cargar un archivo con las mismas columnas "
+        "de features del modelo. Esto permite probar inferencia batch sobre un input nuevo."
+    )
+
+    uploaded_file = st.file_uploader("Subir CSV", type=["csv"])
+
+    if uploaded_file is not None:
+        uploaded_df = pd.read_csv(uploaded_file)
+        st.write("Vista previa del archivo cargado:")
+        st.dataframe(uploaded_df.head(), use_container_width=True)
+
+        if st.button("Predecir archivo cargado"):
+            try:
+                uploaded_predictions = build_uploaded_batch(
+                    uploaded_df,
+                    test_features,
+                    model_payload,
+                )
+                st.success("Predicciones generadas correctamente.")
+                st.dataframe(uploaded_predictions.head(100), use_container_width=True)
+
+                uploaded_csv = uploaded_predictions.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    "Descargar predicciones",
+                    data=uploaded_csv,
+                    file_name="uploaded_batch_predictions.csv",
+                    mime="text/csv",
+                )
+            except ValueError as exc:
+                st.error(str(exc))
+
+with tab4:
+    st.header("Evaluación vs ground truth")
+
+    st.write(
+        "Comparamos las predicciones del modelo contra el valor real del mes de validación. "
+        "También se compara contra un baseline naive que usa el último mes observado."
+    )
+
+    model_rmse = rmse(eval_df["y"], eval_df["prediction"])
+    naive_rmse = rmse(eval_df["y"], eval_df["naive_prediction"])
+    model_mae = mae(eval_df["y"], eval_df["prediction"])
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("RMSE modelo", f"{model_rmse:.4f}")
+    col2.metric("RMSE naive", f"{naive_rmse:.4f}")
+    col3.metric("MAE modelo", f"{model_mae:.4f}")
+
+    st.subheader("Predicción promedio vs valor real por nivel de demanda")
+
+    eval_plot = (
+        eval_df.assign(demand_bucket=pd.cut(eval_df["y"], bins=[-0.1, 0, 1, 3, 7, 20]))
+        .groupby("demand_bucket", as_index=False, observed=False)
+        .agg(
+            real_mean=("y", "mean"),
+            pred_mean=("prediction", "mean"),
+            n=("y", "size"),
+        )
+    )
+    eval_plot["demand_bucket"] = eval_plot["demand_bucket"].astype(str)
+
+    fig_eval = px.line(
+        eval_plot,
+        x="demand_bucket",
+        y=["real_mean", "pred_mean"],
+        markers=True,
+        title="Promedio real vs promedio predicho por rango de demanda",
+        labels={
+            "demand_bucket": "Rango de demanda real",
+            "value": "Unidades promedio",
+            "variable": "Serie",
+        },
+    )
+    st.plotly_chart(fig_eval, use_container_width=True)
+
+    st.subheader("Muestra de errores")
+    st.dataframe(
+        eval_df[
+            ["shop_id", "item_id", "y", "prediction", "naive_prediction", "error", "abs_error"]
+        ].head(500),
+        use_container_width=True,
+    )
+
+with tab5:
+    st.header("KPIs por tienda y producto")
+
+    st.write(
+        "Estas tablas y gráficas ayudan a identificar dónde el modelo falla más. "
+        "El equipo de negocio puede revisar esas tiendas o productos y dejar feedback."
+    )
+
+    by_shop = (
+        eval_df.groupby("shop_id", as_index=False)
+        .agg(
+            n=("y", "size"),
+            y_mean=("y", "mean"),
+            pred_mean=("prediction", "mean"),
+            mae=("abs_error", "mean"),
+        )
+        .sort_values("mae", ascending=False)
+    )
+
+    by_item = (
+        eval_df.groupby("item_id", as_index=False)
+        .agg(
+            n=("y", "size"),
+            y_mean=("y", "mean"),
+            pred_mean=("prediction", "mean"),
+            mae=("abs_error", "mean"),
+            low_activity_rate=("low_activity_flag", "mean"),
+        )
+        .sort_values("mae", ascending=False)
+    )
+
+    col1, col2 = st.columns(2)
+    
+    top_shops_error_plot = by_shop.head(15).copy()
+    top_shops_error_plot["shop_id_label"] = top_shops_error_plot["shop_id"].astype(str)
+    
+    fig_shop_error = px.bar(
+        top_shops_error_plot.sort_values("mae", ascending=True),
+        x="mae",
+        y="shop_id_label",
+        orientation="h",
+        title="Top tiendas por error promedio",
+        labels={
+            "mae": "MAE",
+            "shop_id_label": "Tienda",
+            "n": "Observaciones",
+            "y_mean": "Venta real promedio",
+            "pred_mean": "Predicción promedio",
+        },
+        hover_data={
+            "shop_id_label": True,
+            "mae": ":.4f",
+            "n": True,
+            "y_mean": ":.4f",
+            "pred_mean": ":.4f",
+        },
+    )
+    fig_shop_error.update_layout(yaxis={"categoryorder": "total ascending"})
+    col1.plotly_chart(fig_shop_error, use_container_width=True)
+
+    top_items_plot = by_item.head(15).copy()
+    top_items_plot["item_id_label"] = "Producto " + top_items_plot["item_id"].astype(str)
+    top_items_plot = top_items_plot.sort_values("mae", ascending=True)
+
+    fig_item_error = px.bar(
+        top_items_plot,
+        x="mae",
+        y="item_id_label",
+        orientation="h",
+        title="Top productos por error promedio",
+        text="mae",
+        labels={
+            "mae": "MAE",
+            "item_id_label": "Producto",
+        },
+        custom_data=["item_id", "n", "y_mean", "pred_mean", "mae"],
+    )
+
+    fig_item_error.update_traces(
+        texttemplate="%{text:.2f}",
+        textposition="outside",
+        hovertemplate=(
+            "<b>Producto:</b> %{customdata[0]}<br>"
+            "<b>MAE:</b> %{customdata[4]:.4f}<br>"
+            "<b>Observaciones:</b> %{customdata[1]}<br>"
+            "<b>Venta real promedio:</b> %{customdata[2]:.4f}<br>"
+            "<b>Predicción promedio:</b> %{customdata[3]:.4f}"
+            "<extra></extra>"
+        ),
+    )
+
+    fig_item_error.update_layout(
+        yaxis={"categoryorder": "total ascending"},
+        margin={"l": 120, "r": 40, "t": 60, "b": 40},
+    )
+
+    col2.plotly_chart(fig_item_error, use_container_width=True)
+
+    st.subheader("Error por tienda")
+    st.dataframe(by_shop, use_container_width=True)
+
+    st.subheader("Productos con mayor error")
+    st.dataframe(by_item.head(50), use_container_width=True)
+
+    st.subheader("Productos con baja actividad reciente")
+    low_activity_products = (
+        by_item.query("low_activity_rate > 0")
+        .sort_values(["low_activity_rate", "mae"], ascending=False)
+        .head(50)
+    )
+    st.dataframe(low_activity_products, use_container_width=True)
+
+with tab6:
+    st.header("Feedback de negocio")
+
+    st.write(
+        "Esta vista captura observaciones del equipo de negocio y las guarda en RDS. "
+        "También muestra productos que el modelo marcó como candidatos a revisión."
+    )
+
+    st.subheader("Registrar nueva observación")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        shop_id = st.number_input("shop_id", min_value=0, step=1)
+
+    with col2:
+        item_id = st.number_input("item_id", min_value=0, step=1)
+
+    issue_type = st.selectbox(
+        "Tipo de observación",
+        ["Predicción muy alta", "Predicción muy baja", "Producto descontinuado", "Otro"],
+    )
+
+    analyst_name = st.text_input("Nombre del analista", value="")
+    comment = st.text_area("Comentario del analista")
+
+    if st.button("Guardar feedback en RDS"):
+        try:
+            insert_business_feedback(
+                shop_id=int(shop_id),
+                item_id=int(item_id),
+                issue_type=issue_type,
+                comment=comment,
+                analyst_name=analyst_name or None,
+            )
+            st.success("Feedback guardado correctamente en RDS.")
+        except Exception as exc:
+            st.error(f"No se pudo guardar el feedback: {exc}")
+
+    st.divider()
+
+    st.subheader("Feedback capturado")
+
+    try:
+        feedback_df = read_business_feedback(limit=100)
+        if feedback_df.empty:
+            st.info("Todavía no hay observaciones guardadas.")
+        else:
+            st.dataframe(feedback_df, use_container_width=True)
+    except Exception as exc:
+        st.warning(f"No se pudo leer feedback desde RDS: {exc}")
+
+    st.divider()
+
+    st.subheader("Productos sugeridos para revisión")
+
+    try:
+        problem_df = read_problem_products(limit=100)
+        st.dataframe(problem_df, use_container_width=True)
+    except Exception as exc:
+        st.warning(f"No se pudo leer problem_products desde RDS: {exc}")

@@ -42,6 +42,13 @@ from src.config import (
     TARGET_MAX,
     TARGET_MIN,
 )
+
+import os
+
+# Si estamos en SageMaker, usamos el directorio de datos del training job
+if os.environ.get("SM_CHANNEL_TRAIN"):
+    PREP_DIR = Path(os.environ["SM_CHANNEL_TRAIN"])
+
 from src.utils.data_validation import require_file
 from src.utils.logging_utils import get_logger
 from src.utils.metrics import rmse
@@ -84,13 +91,13 @@ class ModelBundle:
     cat_features: list[str]
 
 
-def cargar_datasets(prep_dir: Path) -> TrainInputs:
+def cargar_datasets(train_dir: Path, validation_dir: Path) -> TrainInputs:
     """
     Carga train/valid parquet y meta.json con la lista de features.
     """
-    train_path = prep_dir / "train.parquet"
-    valid_path = prep_dir / "valid.parquet"
-    meta_path = prep_dir / "meta.json"
+    train_path = train_dir / "train.parquet"
+    valid_path = validation_dir / "valid.parquet"
+    meta_path = train_dir / "meta.json"
 
     require_file(train_path)
     require_file(valid_path)
@@ -288,7 +295,11 @@ def main() -> None:
     logger.info("Iniciando entrenamiento.")
 
     try:
-        inputs = cargar_datasets(PREP_DIR)
+        train_dir = Path("/opt/ml/input/data/train") if Path("/opt/ml/input/data/train").exists() else PREP_DIR
+        validation_dir = Path("/opt/ml/input/data/validation") if Path("/opt/ml/input/data/validation").exists() else PREP_DIR
+        
+        inputs = cargar_datasets(train_dir, validation_dir)
+
         logger.info(
             "Datasets cargados. train_rows=%d valid_rows=%d",
             len(inputs.train_df),
@@ -296,7 +307,9 @@ def main() -> None:
         )
 
         bundle, score = entrenar_modelo_dos_etapas(inputs, logger)
-        guardar_modelo(ARTIFACTS_DIR, bundle, inputs.meta, logger)
+
+        artifacts_dir = Path("/opt/ml/model") if Path("/opt/ml/model").exists() else ARTIFACTS_DIR
+        guardar_modelo(artifacts_dir, bundle, inputs.meta, logger)
 
         logger.info("RMSE final (validación): %.6f", score)
 
@@ -313,6 +326,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prep-dir", type=Path, default=PREP_DIR)
     parser.add_argument("--artifacts-dir", type=Path, default=ARTIFACTS_DIR)
     parser.add_argument("--log-dir", type=Path, default=LOG_DIR)
+
+    parser.add_argument("--model-dir", type=Path, default="/opt/ml/model")
+    parser.add_argument("--train-dir", type=Path, default="/opt/ml/input/data/train")
+    parser.add_argument("--output-dir", type=Path, default="/opt/ml/output")   
 
     parser.add_argument("--clf-n-estimators", type=int, default=LGBM_CLASSIFIER_PARAMS["n_estimators"])
     parser.add_argument("--reg-n-estimators", type=int, default=LGBM_REGRESSOR_PARAMS["n_estimators"])

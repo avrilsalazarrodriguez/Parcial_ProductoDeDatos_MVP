@@ -5,6 +5,8 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
+ENV PYTHONPATH=/app
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libgomp1 \
@@ -15,6 +17,8 @@ RUN pip install --no-cache-dir uv
 COPY pyproject.toml uv.lock README.md /app/
 RUN uv sync --frozen --no-dev --no-install-project
 
+RUN pip install pandas numpy scikit-learn pyarrow lightgbm
+
 COPY src /app/src
 
-ENTRYPOINT ["uv", "run", "python", "-m", "src.preprocessing"]
+ENTRYPOINT ["python"]

@@ -37,7 +37,7 @@ RECENCY_FILL = 99
 
 LAGS = (1, 2, 3, 4, 5, 6, 12)
 
-# Hiperparámetros LightGBM para clasificación y regresión
+# Hiperparámetros LightGBM para clasificacion y regresion
 LGBM_CLASSIFIER_PARAMS = {
     "n_estimators": 6000,
     "learning_rate": 0.03,

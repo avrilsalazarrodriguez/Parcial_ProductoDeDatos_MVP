@@ -1,0 +1,37 @@
+{
+  "sales_path": "data/raw/sales_train.csv",
+  "test_path": "data/raw/test.csv",
+  "items_path": "data/raw/items_en.csv",
+  "categories_path": "data/raw/item_categories_en.csv",
+  "shops_path": "data/raw/shops_en.csv",
+  "n_train_rows": 1577593,
+  "n_valid_rows": 217051,
+  "n_inference_rows": 214200,
+  "n_segments": 84,
+  "validation_block": 33,
+  "inference_block": 34,
+  "feature_cols": [
+    "shop_id",
+    "item_id",
+    "date_block_num",
+    "item_category_id",
+    "month",
+    "cnt_lag_1",
+    "cnt_lag_2",
+    "cnt_lag_3",
+    "cnt_lag_6",
+    "mean_3",
+    "mean_6",
+    "shop_mean_3",
+    "item_mean_3",
+    "category_mean_3",
+    "price_mean",
+    "price_lag_1",
+    "months_active",
+    "recency",
+    "is_new_pair"
+  ],
+  "segment_source_counts": {
+    "item_category_id": 21807
+  }
+}

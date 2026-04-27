@@ -17,4 +17,4 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY src /app/src
 
-ENTRYPOINT ["uv", "run", "python", "-m", "src.training"]
+ENTRYPOINT ["uv", "run", "python", "-m", "src.training.train"]

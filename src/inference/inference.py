@@ -1,93 +1,92 @@
 """
 inference.py
 
-Ejecuta inferencia batch con el modelo entrenado.
+Ejecuta inferencia en tiempo real con el modelo entrenado.
 
 Entradas
 --------
-- data/inference/test_features.parquet (si no existe,
-  se copia desde data/prep/test_features.parquet)
-- data/prep/test_pairs.parquet
-- data/raw/test.csv
-- artifacts/model.joblib
+- /opt/ml/model/model.joblib
 
 Salida
 ------
-- data/predictions/submission.csv
+- Predicciones vía endpoint HTTP de SageMaker:
+  - GET /ping
+  - POST /invocations
 """
 
 from __future__ import annotations
 
-import argparse
-from pathlib import Path
-
+import io
+import json
 import logging
-import shutil
+import os
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import joblib
 import numpy as np
 import pandas as pd
+from flask import Flask, Response, request
 
-from src.config import (
-    ARTIFACTS_DIR,
-    INFERENCE_DIR,
-    LOG_DIR,
-    PREDICTIONS_DIR,
-    PREP_DIR,
-    RAW_DIR,
-    TARGET_MAX,
-    TARGET_MIN,
-)
-from src.utils.data_validation import require_columns, require_file
-from src.utils.logging_utils import get_logger
-
-    
-@dataclass(frozen=True)
-class InferenceInputs:
-    """Inputs necesarios para inferencia batch."""
-
-    test_features: pd.DataFrame
-    test_pairs: pd.DataFrame
-    raw_test: pd.DataFrame
+from src.config import TARGET_MAX, TARGET_MIN
 
 
-def asegurar_features_inferencia(logger: logging.Logger) -> Path:
+MODEL_DIR = Path(os.environ.get("SM_MODEL_DIR", "/opt/ml/model"))
+MODEL_PATH = MODEL_DIR / "model.joblib"
+
+app = Flask(__name__)
+
+_MODEL_PAYLOAD: dict[str, Any] | None = None
+
+
+def get_service_logger() -> logging.Logger:
     """
-    Verifica que exista data/inference/test_features.parquet.
-    Si no existe, lo copia desde data/prep/test_features.parquet.
+    Crea/configura logger para serving en SageMaker.
     """
-    infer_path = INFERENCE_DIR / "test_features.parquet"
-    source_path = PREP_DIR / "test_features.parquet"
+    logger = logging.getLogger(__name__)
 
-    INFERENCE_DIR.mkdir(parents=True, exist_ok=True)
+    if not logger.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        )
 
-    if infer_path.exists():
-        logger.info("Features de inferencia encontrados: %s", infer_path.as_posix())
-        return infer_path
+    return logger
 
-    require_file(source_path)
-    shutil.copyfile(source_path, infer_path)
-    logger.info(
-        "Copiando features de inferencia desde %s a %s",
-        source_path.as_posix(),
-        infer_path.as_posix(),
-    )
-    return infer_path
+
+def require_file(path: Path) -> None:
+    """
+    Verifica que exista un archivo requerido.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"Archivo requerido no encontrado: {path.as_posix()}")
 
 
 def cargar_modelo(model_path: Path) -> dict[str, Any]:
     """
-    Carga el modelo entrenado desde artifacts/model.joblib.
+    Carga el modelo entrenado desde /opt/ml/model/model.joblib.
     """
     require_file(model_path)
     payload: dict[str, Any] = joblib.load(model_path)
     if "bundle" not in payload:
         raise ValueError("Archivo de modelo inválido: se esperaba la llave 'bundle'.")
     return payload
+
+
+def obtener_modelo() -> dict[str, Any]:
+    """
+    Carga el modelo una sola vez y lo mantiene en memoria.
+    """
+    global _MODEL_PAYLOAD
+
+    if _MODEL_PAYLOAD is None:
+        logger = get_service_logger()
+        logger.info("Cargando modelo desde %s", MODEL_PATH.as_posix())
+        _MODEL_PAYLOAD = cargar_modelo(MODEL_PATH)
+        logger.info("Modelo cargado correctamente.")
+
+    return _MODEL_PAYLOAD
 
 
 def predecir(payload: dict[str, Any], test_features: pd.DataFrame) -> np.ndarray:
@@ -97,32 +96,15 @@ def predecir(payload: dict[str, Any], test_features: pd.DataFrame) -> np.ndarray
     bundle = payload["bundle"]
     feature_cols = bundle["feature_cols"]
 
+    missing = [col for col in feature_cols if col not in test_features.columns]
+    if missing:
+        raise ValueError(f"Faltan columnas requeridas para inferencia: {missing}")
+
     x_test = test_features[feature_cols]
     prob = bundle["clf"].predict_proba(x_test)[:, 1].astype(np.float32)
     mu = bundle["reg"].predict(x_test).astype(np.float32)
 
     return np.clip(prob * mu, TARGET_MIN, TARGET_MAX)
-
-
-def construir_submission(
-    preds: np.ndarray, test_pairs: pd.DataFrame, raw_test: pd.DataFrame
-) -> pd.DataFrame:
-    """
-    Arma submission.csv con columnas ID y item_cnt_month.
-    """
-    pred_map = pd.DataFrame(
-        {
-            "shop_id": test_pairs["shop_id"].values,
-            "item_id": test_pairs["item_id"].values,
-            "item_cnt_month": preds,
-        }
-    )
-
-    submission = raw_test.merge(pred_map, on=["shop_id", "item_id"], how="left")
-    submission["item_cnt_month"] = (
-        submission["item_cnt_month"].fillna(0).clip(TARGET_MIN, TARGET_MAX)
-    )
-    return submission[["ID", "item_cnt_month"]]
 
 
 def _log_basic_df_info(logger: logging.Logger, name: str, df: pd.DataFrame) -> None:
@@ -135,131 +117,118 @@ def _log_basic_df_info(logger: logging.Logger, name: str, df: pd.DataFrame) -> N
         logger.warning("%s: total_NA=%d", name, na_total)
 
 
-def cargar_inputs_inferencia(logger: logging.Logger) -> InferenceInputs:
+def cargar_request_as_dataframe(content_type: str, body: bytes) -> pd.DataFrame:
     """
-    Carga archivos necesarios para inferencia y realiza validaciones básicas.
+    Convierte el body del request a DataFrame.
+
+    Content types soportados
+    ------------------------
+    - application/json
+    - text/csv
     """
-    features_path = asegurar_features_inferencia(logger)
-    test_features = pd.read_parquet(features_path)
-    _log_basic_df_info(logger, "test_features", test_features)
+    if "application/json" in content_type:
+        payload = json.loads(body.decode("utf-8"))
 
-    test_pairs_path = PREP_DIR / "test_pairs.parquet"
-    require_file(test_pairs_path)
-    test_pairs = pd.read_parquet(test_pairs_path)
-    _log_basic_df_info(logger, "test_pairs", test_pairs)
+        if isinstance(payload, dict):
+            if "instances" in payload:
+                return pd.DataFrame(payload["instances"])
+            if "inputs" in payload:
+                return pd.DataFrame(payload["inputs"])
+            return pd.DataFrame([payload])
 
-    raw_test_path = RAW_DIR / "test.csv"
-    require_file(raw_test_path)
-    raw_test = pd.read_csv(raw_test_path, encoding="utf-8")
-    raw_test.columns = raw_test.columns.str.strip()
-    require_columns(raw_test, ["ID", "shop_id", "item_id"], "test.csv")
-    _log_basic_df_info(logger, "raw_test", raw_test)
+        if isinstance(payload, list):
+            return pd.DataFrame(payload)
 
-    raw_test["ID"] = pd.to_numeric(raw_test["ID"], errors="coerce").astype(np.int32)
-    raw_test["shop_id"] = pd.to_numeric(raw_test["shop_id"], errors="coerce").astype(
-        np.int16
-    )
-    raw_test["item_id"] = pd.to_numeric(raw_test["item_id"], errors="coerce").astype(
-        np.int16
-    )
+        raise ValueError("JSON inválido para inferencia.")
 
-    return InferenceInputs(
-        test_features=test_features,
-        test_pairs=test_pairs,
-        raw_test=raw_test,
-    )
+    if "text/csv" in content_type:
+        csv_text = body.decode("utf-8")
+        payload = obtener_modelo()
+        feature_cols = payload["bundle"]["feature_cols"]
+        
+        first_line = csv_text.splitlines()[0].strip() if csv_text.strip() else ""
+        header_tokens = [token.strip() for token in first_line.split(",")] if first_line else []
+        
+        if header_tokens == feature_cols:
+            return pd.read_csv(io.StringIO(csv_text), dtype=np.float32)
+            
+        return pd.read_csv(
+            io.StringIO(csv_text),
+            header=None,
+            names=feature_cols,
+            dtype=np.float32,
+        )
 
-
-def run_inference(inputs: InferenceInputs, logger: logging.Logger) -> pd.DataFrame:
-    """
-    Corre inferencia completa y regresa el DataFrame de submission.
-    """
-    model_path = ARTIFACTS_DIR / "model.joblib"
-    payload = cargar_modelo(model_path)
-
-    bundle = payload["bundle"]
-    feature_cols = bundle.get("feature_cols", [])
-    missing = [col for col in feature_cols if col not in inputs.test_features.columns]
-    if missing:
-        logger.warning("Faltan columnas en test_features: %s", missing)
-
-    logger.info("Generando predicciones.")
-    preds = predecir(payload, inputs.test_features)
-    logger.info(
-        "Preds: n=%d min=%.4f p50=%.4f max=%.4f",
-        len(preds),
-        float(np.min(preds)),
-        float(np.median(preds)),
-        float(np.max(preds)),
+    raise ValueError(
+        "Content-Type no soportado. Usa application/json o text/csv."
     )
 
-    return construir_submission(preds, inputs.test_pairs, inputs.raw_test)
 
-
-def guardar_submission(submission: pd.DataFrame, logger: logging.Logger) -> Path:
+@app.get("/ping")
+def ping() -> Response:
     """
-    Guarda submission.csv en data/predictions/.
+    Endpoint de health check requerido por SageMaker.
     """
-    PREDICTIONS_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = PREDICTIONS_DIR / "submission.csv"
-    submission.to_csv(out_path, index=False, encoding="utf-8")
-
-    logger.info(
-        "Submission guardado: %s filas=%d", out_path.as_posix(), len(submission)
-    )
-    return out_path
-
-
-def main() -> None:
-    """
-    Punto de entrada del pipeline de inferencia batch.
-    """
-    logger = get_logger(__name__, log_dir=LOG_DIR, prefijo_archivo="inference")
-    start = time.perf_counter()
-    logger.info("Iniciando inferencia batch.")
+    logger = get_service_logger()
 
     try:
-        inputs = cargar_inputs_inferencia(logger)
-        submission = run_inference(inputs, logger)
-        guardar_submission(submission, logger)
+        obtener_modelo()
+        logger.info("Health check OK.")
+        return Response(response="OK", status=200, mimetype="text/plain")
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Fallo en /ping: %s", str(exc))
+        return Response(response=str(exc), status=500, mimetype="text/plain")
+
+
+@app.post("/invocations")
+def invocations() -> Response:
+    """
+    Endpoint de inferencia requerido por SageMaker.
+    """
+    logger = get_service_logger()
+    start = time.perf_counter()
+    logger.info("Iniciando inferencia en tiempo real.")
+
+    try:
+        content_type = request.content_type or ""
+        df = cargar_request_as_dataframe(content_type, request.data)
+        _log_basic_df_info(logger, "request_df", df)
+
+        payload = obtener_modelo()
+        preds = predecir(payload, df)
+
+        logger.info(
+            "Preds: n=%d min=%.4f p50=%.4f max=%.4f",
+            len(preds),
+            float(np.min(preds)),
+            float(np.median(preds)),
+            float(np.max(preds)),
+        )
+
+        response_body = json.dumps({"predictions": preds.tolist()})
+        return Response(response=response_body, status=200, mimetype="application/json")
 
     except FileNotFoundError as exc:
         logger.exception("Archivo requerido no encontrado: %s", str(exc))
-        raise
+        return Response(
+            response=json.dumps({"error": str(exc)}),
+            status=500,
+            mimetype="application/json",
+        )
     except (ValueError, KeyError) as exc:
         logger.exception("Error de validación/estructura de datos: %s", str(exc))
-        raise
+        return Response(
+            response=json.dumps({"error": str(exc)}),
+            status=400,
+            mimetype="application/json",
+        )
     except Exception as exc:  # noqa: BLE001
         logger.exception("Error inesperado en inferencia: %s", str(exc))
-        raise
+        return Response(
+            response=json.dumps({"error": str(exc)}),
+            status=500,
+            mimetype="application/json",
+        )
     finally:
         duration = time.perf_counter() - start
         logger.info("Inferencia terminada. duracion_seg=%.2f", duration)
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Batch inference")
-    parser.add_argument("--inference-dir", type=Path, default=INFERENCE_DIR)
-    parser.add_argument("--prep-dir", type=Path, default=PREP_DIR)
-    parser.add_argument("--raw-dir", type=Path, default=RAW_DIR)
-    parser.add_argument("--artifacts-dir", type=Path, default=ARTIFACTS_DIR)
-    parser.add_argument("--predictions-dir", type=Path, default=PREDICTIONS_DIR)
-    parser.add_argument("--log-dir", type=Path, default=LOG_DIR)
-    return parser
-
-
-def cli_main(argv: list[str] | None = None) -> None:
-    args = build_parser().parse_args(argv)
-
-    global INFERENCE_DIR, PREP_DIR, RAW_DIR, ARTIFACTS_DIR, PREDICTIONS_DIR, LOG_DIR
-    INFERENCE_DIR = args.inference_dir
-    PREP_DIR = args.prep_dir
-    RAW_DIR = args.raw_dir
-    ARTIFACTS_DIR = args.artifacts_dir
-    PREDICTIONS_DIR = args.predictions_dir
-    LOG_DIR = args.log_dir
-
-    main()
-
-if __name__ == "__main__":
-    main()

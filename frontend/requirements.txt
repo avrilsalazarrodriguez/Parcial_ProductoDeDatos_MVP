@@ -1,0 +1,13 @@
+streamlit
+pandas
+numpy
+pyarrow
+joblib
+lightgbm
+scikit-learn
+plotly
+great-tables
+sqlalchemy
+psycopg2-binary
+boto3
+awswrangler

@@ -14,7 +14,11 @@ RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml uv.lock README.md /app/
 RUN uv sync --frozen --no-dev --no-install-project
+RUN uv pip install --python /app/.venv/bin/python flask gunicorn
 
 COPY src /app/src
 
-ENTRYPOINT ["uv", "run", "python", "-m", "src.inference"]
+ENV PYTHONPATH=/app
+ENV PATH="/app/.venv/bin:$PATH"
+
+ENTRYPOINT ["gunicorn", "--bind", "0.0.0.0:8080", "src.inference.inference:app"]
