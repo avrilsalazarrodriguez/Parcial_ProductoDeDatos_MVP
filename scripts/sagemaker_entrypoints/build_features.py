@@ -1,4 +1,8 @@
-"""SageMaker entrypoint for feature building."""
+"""SageMaker entrypoint for feature building.
+
+This wrapper ensures that the repository root is available on sys.path when
+SageMaker executes the code inside /opt/ml/processing/input/code/.
+"""
 
 from __future__ import annotations
 
