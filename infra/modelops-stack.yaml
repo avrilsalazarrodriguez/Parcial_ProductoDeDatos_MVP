@@ -1,0 +1,132 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: S3, Glue Data Catalog, Glue crawler and SageMaker role for segmented ModelOps flow.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: pfs-modelops
+  BucketName:
+    Type: String
+    Default: ""
+
+Conditions:
+  CreateBucketName: !Equals [!Ref BucketName, ""]
+
+Resources:
+  ModelOpsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !If
+        - CreateBucketName
+        - !Sub "${ProjectName}-${AWS::AccountId}-${AWS::Region}"
+        - !Ref BucketName
+      VersioningConfiguration:
+        Status: Enabled
+
+  GlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Sub "${ProjectName}_db"
+        Description: Data Catalog for forecast features, evaluation and predictions.
+
+  SageMakerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-sagemaker-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sagemaker.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${ProjectName}-s3-glue-logs"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ModelOpsBucket.Arn
+                  - !Sub "${ModelOpsBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - glue:CreateTable
+                  - glue:UpdateTable
+                  - glue:GetTable
+                  - glue:GetTables
+                  - glue:GetDatabase
+                  - glue:GetDatabases
+                  - glue:CreatePartition
+                  - glue:BatchCreatePartition
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchCheckLayerAvailability
+                Resource: "*"
+
+  GlueCrawlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-glue-crawler-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: !Sub "${ProjectName}-crawler-s3-access"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ModelOpsBucket.Arn
+                  - !Sub "${ModelOpsBucket.Arn}/*"
+
+  ModelOpsCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: !Sub "${ProjectName}-crawler"
+      Role: !GetAtt GlueCrawlerRole.Arn
+      DatabaseName: !Ref GlueDatabase
+      Description: Catalogs modelops features, evaluation and prediction outputs.
+      Targets:
+        S3Targets:
+          - Path: !Sub "s3://${ModelOpsBucket}/modelops/"
+      SchemaChangePolicy:
+        UpdateBehavior: UPDATE_IN_DATABASE
+        DeleteBehavior: LOG
+
+Outputs:
+  BucketName:
+    Value: !Ref ModelOpsBucket
+  GlueDatabaseName:
+    Value: !Ref GlueDatabase
+  GlueCrawlerName:
+    Value: !Ref ModelOpsCrawler
+  SageMakerExecutionRoleArn:
+    Value: !GetAtt SageMakerExecutionRole.Arn

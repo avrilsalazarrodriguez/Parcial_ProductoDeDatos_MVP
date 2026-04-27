@@ -5,17 +5,23 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "awswrangler>=3.16.0",
+    "boto3>=1.42.91",
     "joblib>=1.5.3",
     "lightgbm>=4.6.0",
     "matplotlib>=3.10.8",
     "numpy>=2.4.1",
     "pandas>=2.3.3",
     "pyarrow>=23.0.0",
+    "pyyaml>=6.0.3",
+    "s3fs>=2026.3.0",
+    "sagemaker>=2.230,<3",
     "scikit-learn>=1.8.0",
 ]
 
 [dependency-groups]
 dev = [
     "pylint>=4.0.4",
+    "pytest>=9.0.3",
     "ruff>=0.15.1",
 ]
