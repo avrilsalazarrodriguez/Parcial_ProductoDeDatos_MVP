@@ -32,3 +32,10 @@ modelops_source.zip
 modelops_outputs.env
 data/incoming/
 data/modelops/
+
+# Local/system files
+.DS_Store
+**/.DS_Store
+
+# Temporary local artifacts
+tmp/
