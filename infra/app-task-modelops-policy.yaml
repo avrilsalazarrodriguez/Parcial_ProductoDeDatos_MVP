@@ -1,0 +1,54 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Grant ECS Streamlit task role access to ModelOps S3 outputs and CFO exports"
+
+Parameters:
+  ModelBucket:
+    Type: String
+    Description: S3 bucket created by the ModelOps stack
+
+  EcsTaskRoleName:
+    Type: String
+    Description: IAM role name used as taskRoleArn by the ECS task definition
+
+Resources:
+  AppModelOpsS3Policy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: app-modelops-s3-access
+      Roles:
+        - !Ref EcsTaskRoleName
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ListModelOpsBucket
+            Effect: Allow
+            Action:
+              - s3:ListBucket
+            Resource:
+              - !Sub "arn:aws:s3:::${ModelBucket}"
+            Condition:
+              StringLike:
+                s3:prefix:
+                  - "modelops/*"
+                  - "app/batch_exports/*"
+
+          - Sid: ReadModelOpsOutputs
+            Effect: Allow
+            Action:
+              - s3:GetObject
+            Resource:
+              - !Sub "arn:aws:s3:::${ModelBucket}/modelops/*"
+
+          - Sid: WriteCfoBatchExports
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+            Resource:
+              - !Sub "arn:aws:s3:::${ModelBucket}/app/batch_exports/*"
+
+Outputs:
+  PolicyName:
+    Value: app-modelops-s3-access
+  RoleName:
+    Value: !Ref EcsTaskRoleName

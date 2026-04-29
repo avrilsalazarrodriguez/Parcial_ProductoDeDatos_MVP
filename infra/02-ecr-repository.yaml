@@ -1,0 +1,24 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "ECR repository for the Streamlit MVP container image."
+
+Parameters:
+  RepositoryName:
+    Type: String
+    Default: pfs-mvp-app
+
+Resources:
+  AppRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref RepositoryName
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+
+Outputs:
+  RepositoryName:
+    Value: !Ref AppRepository
+
+  RepositoryUri:
+    Value: !GetAtt AppRepository.RepositoryUri
