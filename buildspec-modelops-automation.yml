@@ -1,0 +1,32 @@
+version: 0.2
+
+env:
+  shell: bash
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - pip install --no-cache-dir uv
+      - uv sync
+
+  pre_build:
+    commands:
+      - export RUN_ID=$(date -u +%Y%m%dT%H%M%SZ)
+      - echo "RUN_ID=${RUN_ID}"
+      - echo "MODEL_BUCKET=${MODEL_BUCKET}"
+      - echo "AUTO_MERGE_INCOMING=${AUTO_MERGE_INCOMING}"
+
+  build:
+    commands:
+      - PYTHONPATH=. uv run python scripts/ingest_latest_incoming_and_refresh_current.py --bucket "$MODEL_BUCKET" --enabled "$AUTO_MERGE_INCOMING" --run-id "$RUN_ID"
+      - PYTHONPATH=. uv run python scripts/run_model_flow_aws_jobs_v2.py --role-arn "$SAGEMAKER_ROLE_ARN" --bucket "$MODEL_BUCKET" --region "$AWS_REGION" --instance-type "$INSTANCE_TYPE" --base-prefix "modelops/runs/$RUN_ID" --sales-key "raw/current/sales_train.csv" --test-key "raw/current/test.csv" --items-key "raw/current/items_en.csv" --categories-key "raw/current/item_categories_en.csv" --shops-key "raw/current/shops_en.csv"
+      - PYTHONPATH=. uv run python scripts/register_and_promote_model.py --bucket "$MODEL_BUCKET" --run-id "$RUN_ID" --base-prefix "modelops/runs/$RUN_ID" --min-improvement "$MIN_IMPROVEMENT"
+      - aws glue start-crawler --name "$GLUE_CRAWLER_NAME" || true
+
+  post_build:
+    commands:
+      - echo "ModelOps automation finished"
+      - echo "RUN_ID=${RUN_ID}"
+      - echo "Latest forecast=s3://$MODEL_BUCKET/modelops/latest/predictions/forecast_detail.parquet"

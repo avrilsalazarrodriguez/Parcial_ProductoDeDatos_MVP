@@ -1,209 +1,179 @@
-"""Loaders for ModelOps outputs stored in Amazon S3.
+"""S3 loaders for Streamlit ModelOps outputs with dimension enrichment.
 
-The Streamlit app uses this module to read precomputed batch forecasts and
-model-evaluation artifacts from S3. It intentionally uses boto3 instead of s3fs
-to avoid dependency conflicts in ECS and SageMaker containers.
+This module replaces/extends the previous `backend/modelops_s3.py`. It reads
+forecast/evaluation outputs from `modelops/latest`, enriches them with shop and
+item/category names, and hides confusing sentinel values such as recency=99.
 """
 
 from __future__ import annotations
 
 import json
-import logging
 import os
-from dataclasses import dataclass
 from io import BytesIO
 
 import boto3
 import pandas as pd
-from botocore.exceptions import ClientError
 
-LOGGER = logging.getLogger(__name__)
+from modelops.data_quality_dimensions import (
+    build_item_dimension,
+    build_shop_dimension,
+    enrich_with_dimensions,
+)
 
-
-@dataclass(frozen=True)
-class ModelOpsConfig:
-    """Runtime configuration for S3 ModelOps artifacts."""
-
-    bucket: str
-    prefix: str = "modelops/latest"
-    registry_prefix: str = "modelops/registry"
-
-
-def get_config() -> ModelOpsConfig:
-    """Read ModelOps settings from environment variables."""
-    bucket = os.getenv("MODEL_BUCKET")
-    if not bucket:
-        raise RuntimeError("MODEL_BUCKET is not configured")
-
-    return ModelOpsConfig(
-        bucket=bucket,
-        prefix=os.getenv("MODELOPS_PREFIX", "modelops/latest").strip("/"),
-        registry_prefix=os.getenv("MODELOPS_REGISTRY_PREFIX", "modelops/registry").strip("/"),
-    )
+DEFAULT_PREFIX = "modelops/latest"
+DEFAULT_REGISTRY_PREFIX = "modelops/registry"
+RAW_CURRENT_PREFIX = "raw/current"
 
 
 def _s3_client():
-    """Create an S3 client using the default AWS credential chain."""
     return boto3.client("s3", region_name=os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION"))
 
 
+def get_model_bucket() -> str:
+    """Return the S3 bucket where ModelOps artifacts live."""
+    bucket = os.getenv("MODEL_BUCKET")
+    if not bucket:
+        raise RuntimeError("MODEL_BUCKET is not configured")
+    return bucket
+
+
+def get_modelops_prefix() -> str:
+    """Return current ModelOps artifact prefix."""
+    return os.getenv("MODELOPS_PREFIX", DEFAULT_PREFIX).strip("/")
+
+
+def get_registry_prefix() -> str:
+    """Return model registry prefix."""
+    return os.getenv("MODELOPS_REGISTRY_PREFIX", DEFAULT_REGISTRY_PREFIX).strip("/")
+
+
 def _read_s3_bytes(key: str) -> bytes:
-    """Read an S3 object as bytes from the configured ModelOps bucket."""
-    cfg = get_config()
-    try:
-        response = _s3_client().get_object(Bucket=cfg.bucket, Key=key)
-        return response["Body"].read()
-    except ClientError as exc:
-        error_code = exc.response.get("Error", {}).get("Code", "Unknown")
-        LOGGER.warning(
-            "action=s3_read status=failure bucket=%s key=%s error_code=%s",
-            cfg.bucket,
-            key,
-            error_code,
-        )
-        raise
+    obj = _s3_client().get_object(Bucket=get_model_bucket(), Key=key)
+    return obj["Body"].read()
 
 
-def _object_exists(key: str) -> bool:
-    """Return True when an S3 key exists."""
-    cfg = get_config()
-    try:
-        _s3_client().head_object(Bucket=cfg.bucket, Key=key)
-        return True
-    except ClientError:
-        return False
+def _read_csv_key(key: str) -> pd.DataFrame:
+    obj = _s3_client().get_object(Bucket=get_model_bucket(), Key=key)
+    return pd.read_csv(obj["Body"])
 
 
 def read_modelops_parquet(relative_key: str) -> pd.DataFrame:
-    """Read a parquet file under MODELOPS_PREFIX."""
-    cfg = get_config()
-    key = f"{cfg.prefix}/{relative_key.lstrip('/')}"
+    """Read parquet below MODELOPS_PREFIX."""
+    key = f"{get_modelops_prefix()}/{relative_key.lstrip('/')}"
     return pd.read_parquet(BytesIO(_read_s3_bytes(key)))
 
 
 def read_modelops_csv(relative_key: str) -> pd.DataFrame:
-    """Read a CSV file under MODELOPS_PREFIX."""
-    cfg = get_config()
-    key = f"{cfg.prefix}/{relative_key.lstrip('/')}"
-    return pd.read_csv(BytesIO(_read_s3_bytes(key)))
+    """Read CSV below MODELOPS_PREFIX."""
+    key = f"{get_modelops_prefix()}/{relative_key.lstrip('/')}"
+    return _read_csv_key(key)
 
 
 def read_modelops_json(relative_key: str) -> dict:
-    """Read a JSON file under MODELOPS_PREFIX."""
-    cfg = get_config()
-    key = f"{cfg.prefix}/{relative_key.lstrip('/')}"
+    """Read JSON below MODELOPS_PREFIX."""
+    key = f"{get_modelops_prefix()}/{relative_key.lstrip('/')}"
     return json.loads(_read_s3_bytes(key).decode("utf-8"))
 
 
-def read_registry_json(filename: str) -> dict:
-    """Read a JSON file under MODELOPS_REGISTRY_PREFIX."""
-    cfg = get_config()
-    key = f"{cfg.registry_prefix}/{filename.lstrip('/')}"
+_shop_dimension_cache: pd.DataFrame | None = None
+_item_dimension_cache: pd.DataFrame | None = None
+
+
+def load_shop_dimension() -> pd.DataFrame | None:
+    """Load and clean shops from raw/current/shops_en.csv."""
+    global _shop_dimension_cache
+    if _shop_dimension_cache is not None:
+        return _shop_dimension_cache
     try:
-        return json.loads(_read_s3_bytes(key).decode("utf-8"))
-    except ClientError as exc:
-        if exc.response.get("Error", {}).get("Code") in {"NoSuchKey", "404"}:
-            return {}
-        raise
+        shops = _read_csv_key(f"{RAW_CURRENT_PREFIX}/shops_en.csv")
+        _shop_dimension_cache = build_shop_dimension(shops)
+        return _shop_dimension_cache
+    except Exception:
+        return None
 
 
-def read_registry_csv(filename: str) -> pd.DataFrame:
-    """Read a CSV file under MODELOPS_REGISTRY_PREFIX."""
-    cfg = get_config()
-    key = f"{cfg.registry_prefix}/{filename.lstrip('/')}"
+def load_item_dimension() -> pd.DataFrame | None:
+    """Load and clean items/categories from raw/current."""
+    global _item_dimension_cache
+    if _item_dimension_cache is not None:
+        return _item_dimension_cache
     try:
-        return pd.read_csv(BytesIO(_read_s3_bytes(key)))
-    except ClientError as exc:
-        if exc.response.get("Error", {}).get("Code") in {"NoSuchKey", "404"}:
-            return pd.DataFrame()
-        raise
+        items = _read_csv_key(f"{RAW_CURRENT_PREFIX}/items_en.csv")
+        try:
+            categories = _read_csv_key(f"{RAW_CURRENT_PREFIX}/item_categories_en.csv")
+        except Exception:
+            categories = None
+        _item_dimension_cache = build_item_dimension(items, categories)
+        return _item_dimension_cache
+    except Exception:
+        return None
 
 
-def _ensure_prediction_column(df: pd.DataFrame) -> pd.DataFrame:
-    """Normalize forecast column names for the Streamlit app."""
-    result = df.copy()
-    if "prediction" not in result.columns:
-        for candidate in ["y_hat", "forecast", "pred", "item_cnt_month"]:
-            if candidate in result.columns:
-                result["prediction"] = result[candidate]
-                break
-    if "prediction" in result.columns:
-        result["prediction"] = result["prediction"].clip(0, 20)
-    return result
+def enrich_table(df: pd.DataFrame) -> pd.DataFrame:
+    """Enrich an output table with friendly dimensions when possible."""
+    return enrich_with_dimensions(
+        df,
+        shop_dimension=load_shop_dimension(),
+        item_dimension=load_item_dimension(),
+    )
 
 
 def load_forecast_detail() -> pd.DataFrame:
-    """Load precomputed forecasts by shop-item pair."""
-    return _ensure_prediction_column(read_modelops_parquet("predictions/forecast_detail.parquet"))
+    return enrich_table(read_modelops_parquet("predictions/forecast_detail.parquet"))
 
 
 def load_forecast_summary_by_category() -> pd.DataFrame:
-    """Load forecast summary by item category."""
-    return read_modelops_parquet("predictions/forecast_summary_by_category.parquet")
+    return enrich_table(read_modelops_parquet("predictions/forecast_summary_by_category.parquet"))
 
 
 def load_forecast_summary_by_shop_segment() -> pd.DataFrame:
-    """Load forecast summary by shop and product segment."""
-    return read_modelops_parquet("predictions/forecast_summary_by_shop_segment.parquet")
+    return enrich_table(read_modelops_parquet("predictions/forecast_summary_by_shop_segment.parquet"))
 
 
 def load_submission() -> pd.DataFrame:
-    """Load Kaggle-style submission from ModelOps latest prefix."""
     return read_modelops_csv("predictions/submission.csv")
 
 
 def load_evaluation_detail() -> pd.DataFrame:
-    """Load evaluation detail with ground truth and predictions."""
-    return read_modelops_parquet("evaluation/evaluation_detail.parquet")
+    return enrich_table(read_modelops_parquet("evaluation/evaluation_detail.parquet"))
 
 
 def load_evaluation_by_segment() -> pd.DataFrame:
-    """Load evaluation metrics by segment/category."""
-    return read_modelops_parquet("evaluation/evaluation_by_segment.parquet")
+    return enrich_table(read_modelops_parquet("evaluation/evaluation_by_segment.parquet"))
 
 
 def load_evaluation_by_item() -> pd.DataFrame:
-    """Load evaluation metrics by product."""
-    return read_modelops_parquet("evaluation/evaluation_by_item.parquet")
+    return enrich_table(read_modelops_parquet("evaluation/evaluation_by_item.parquet"))
 
 
 def load_model_metrics() -> dict:
-    """Load global model metrics."""
     return read_modelops_json("evaluation/model_metrics.json")
 
 
-def load_champion() -> dict:
-    """Load current champion metadata from registry."""
-    return read_registry_json("champion.json")
-
-
 def load_model_runs() -> pd.DataFrame:
-    """Load model registry table."""
-    return read_registry_csv("model_runs.csv")
+    key = f"{get_registry_prefix()}/model_runs.csv"
+    return _read_csv_key(key)
+
+
+def load_champion() -> dict:
+    key = f"{get_registry_prefix()}/champion.json"
+    return json.loads(_read_s3_bytes(key).decode("utf-8"))
 
 
 def modelops_healthcheck() -> dict:
-    """Return expected S3 keys and whether they exist."""
-    cfg = get_config()
-    keys = {
-        "forecast_detail": f"{cfg.prefix}/predictions/forecast_detail.parquet",
-        "forecast_summary_by_category": f"{cfg.prefix}/predictions/forecast_summary_by_category.parquet",
-        "forecast_summary_by_shop_segment": f"{cfg.prefix}/predictions/forecast_summary_by_shop_segment.parquet",
-        "evaluation_by_segment": f"{cfg.prefix}/evaluation/evaluation_by_segment.parquet",
-        "evaluation_by_item": f"{cfg.prefix}/evaluation/evaluation_by_item.parquet",
-        "model_metrics": f"{cfg.prefix}/evaluation/model_metrics.json",
-        "champion": f"{cfg.registry_prefix}/champion.json",
-        "model_runs": f"{cfg.registry_prefix}/model_runs.csv",
-    }
+    bucket = get_model_bucket()
+    prefix = get_modelops_prefix()
+    registry_prefix = get_registry_prefix()
     return {
-        "bucket": cfg.bucket,
-        "prefix": cfg.prefix,
-        "registry_prefix": cfg.registry_prefix,
-        "objects": {
-            name: {
-                "s3_uri": f"s3://{cfg.bucket}/{key}",
-                "exists": _object_exists(key),
-            }
-            for name, key in keys.items()
-        },
+        "bucket": bucket,
+        "prefix": prefix,
+        "registry_prefix": registry_prefix,
+        "forecast_detail": f"s3://{bucket}/{prefix}/predictions/forecast_detail.parquet",
+        "evaluation_by_segment": f"s3://{bucket}/{prefix}/evaluation/evaluation_by_segment.parquet",
+        "evaluation_by_item": f"s3://{bucket}/{prefix}/evaluation/evaluation_by_item.parquet",
+        "model_metrics": f"s3://{bucket}/{prefix}/evaluation/model_metrics.json",
+        "champion": f"s3://{bucket}/{registry_prefix}/champion.json",
+        "model_runs": f"s3://{bucket}/{registry_prefix}/model_runs.csv",
+        "shops": f"s3://{bucket}/{RAW_CURRENT_PREFIX}/shops_en.csv",
+        "items": f"s3://{bucket}/{RAW_CURRENT_PREFIX}/items_en.csv",
     }

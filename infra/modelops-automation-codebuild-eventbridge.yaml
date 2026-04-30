@@ -1,0 +1,178 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Automated ModelOps retraining with CodeBuild, EventBridge schedule, and S3 incoming trigger."
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: pfs-modelops
+  ModelBucket:
+    Type: String
+  SageMakerRoleArn:
+    Type: String
+  GlueCrawlerName:
+    Type: String
+  SourceZipKey:
+    Type: String
+    Default: code/modelops_automation_source.zip
+  InstanceType:
+    Type: String
+    Default: ml.m5.xlarge
+  ScheduleExpression:
+    Type: String
+    Default: rate(7 days)
+  AutoMergeIncoming:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+  MinImprovement:
+    Type: String
+    Default: "0.0"
+
+Resources:
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-automation-codebuild-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${ProjectName}-automation-codebuild-policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::${ModelBucket}"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource:
+                  - !Sub "arn:aws:s3:::${ModelBucket}/*"
+              - Effect: Allow
+                Action:
+                  - sagemaker:CreateProcessingJob
+                  - sagemaker:DescribeProcessingJob
+                  - sagemaker:StopProcessingJob
+                  - sagemaker:ListProcessingJobs
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource: !Ref SageMakerRoleArn
+              - Effect: Allow
+                Action:
+                  - glue:StartCrawler
+                  - glue:GetCrawler
+                  - glue:GetTables
+                  - glue:GetDatabase
+                Resource: "*"
+
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${ProjectName}-automation-complete"
+      Description: "Runs new-data ingestion, retraining, scoring, registry, and Glue refresh."
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Source:
+        Type: S3
+        Location: !Sub "${ModelBucket}/${SourceZipKey}"
+        BuildSpec: buildspec-modelops-automation.yml
+      Environment:
+        Type: LINUX_CONTAINER
+        Image: aws/codebuild/standard:7.0
+        ComputeType: BUILD_GENERAL1_MEDIUM
+        EnvironmentVariables:
+          - Name: MODEL_BUCKET
+            Value: !Ref ModelBucket
+          - Name: SAGEMAKER_ROLE_ARN
+            Value: !Ref SageMakerRoleArn
+          - Name: GLUE_CRAWLER_NAME
+            Value: !Ref GlueCrawlerName
+          - Name: INSTANCE_TYPE
+            Value: !Ref InstanceType
+          - Name: AUTO_MERGE_INCOMING
+            Value: !Ref AutoMergeIncoming
+          - Name: MIN_IMPROVEMENT
+            Value: !Ref MinImprovement
+
+  EventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-automation-eventbridge-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${ProjectName}-automation-eventbridge-policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: codebuild:StartBuild
+                Resource: !GetAtt CodeBuildProject.Arn
+
+  ScheduledRetrainingRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${ProjectName}-scheduled-retraining-complete"
+      Description: "Scheduled retraining, disabled by default for cost control."
+      ScheduleExpression: !Ref ScheduleExpression
+      State: DISABLED
+      Targets:
+        - Id: CodeBuildScheduledTarget
+          Arn: !GetAtt CodeBuildProject.Arn
+          RoleArn: !GetAtt EventBridgeRole.Arn
+
+  S3IncomingRetrainingRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${ProjectName}-s3-incoming-retraining"
+      Description: "Starts retraining when a new CSV lands under raw/incoming/."
+      State: DISABLED
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - Object Created
+        detail:
+          bucket:
+            name:
+              - !Ref ModelBucket
+          object:
+            key:
+              - prefix: raw/incoming/
+      Targets:
+        - Id: CodeBuildS3IncomingTarget
+          Arn: !GetAtt CodeBuildProject.Arn
+          RoleArn: !GetAtt EventBridgeRole.Arn
+
+Outputs:
+  CodeBuildProjectName:
+    Value: !Ref CodeBuildProject
+  ScheduledRetrainingRuleName:
+    Value: !Ref ScheduledRetrainingRule
+  S3IncomingRetrainingRuleName:
+    Value: !Ref S3IncomingRetrainingRule
+  SourceZipUri:
+    Value: !Sub "s3://${ModelBucket}/${SourceZipKey}"

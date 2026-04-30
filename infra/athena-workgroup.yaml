@@ -1,0 +1,25 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Athena workgroup for querying ModelOps/Glue tables."
+
+Parameters:
+  ModelBucket:
+    Type: String
+  WorkGroupName:
+    Type: String
+    Default: pfs-modelops-athena
+
+Resources:
+  AthenaWorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: !Ref WorkGroupName
+      Description: "Athena workgroup for the 1C forecasting MVP"
+      State: ENABLED
+      WorkGroupConfiguration:
+        EnforceWorkGroupConfiguration: true
+        ResultConfiguration:
+          OutputLocation: !Sub "s3://${ModelBucket}/athena/results/"
+
+Outputs:
+  AthenaWorkGroupName:
+    Value: !Ref AthenaWorkGroup

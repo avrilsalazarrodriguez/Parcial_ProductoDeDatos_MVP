@@ -1,0 +1,9 @@
+pandas
+pyarrow
+numpy
+scikit-learn
+joblib
+boto3
+sagemaker
+streamlit
+plotly

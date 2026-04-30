@@ -1,0 +1,21 @@
+<mxfile host="app.diagrams.net" modified="2026-04-28T00:00:00.000Z" agent="ChatGPT" version="24.7.17" type="device">
+  <diagram id="erd-rds" name="RDS ERD">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/><mxCell id="1" parent="0"/>
+        <mxCell id="title" value="ERD — RDS PostgreSQL para MVP 1C" style="text;html=1;strokeColor=none;fillColor=none;fontSize=22;fontStyle=1" vertex="1" parent="1"><mxGeometry x="430" y="30" width="500" height="40" as="geometry"/></mxCell>
+        <mxCell id="feedback" value="business_feedback\nPK feedback_id\nshop_id\nitem_id\nissue_type\ncomment\nanalyst_name\ncreated_at" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1" vertex="1" parent="1"><mxGeometry x="80" y="120" width="260" height="180" as="geometry"/></mxCell>
+        <mxCell id="exports" value="batch_exports\nPK export_id\nscope\nshop_id\nrecords_count\ntotal_prediction\ns3_uri\ncreated_at" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1" vertex="1" parent="1"><mxGeometry x="420" y="120" width="260" height="180" as="geometry"/></mxCell>
+        <mxCell id="usage" value="app_usage_events\nPK event_id\nevent_type\nshop_id\nitem_id\nrecords_count\nstatus\nmessage\ncreated_at" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1" vertex="1" parent="1"><mxGeometry x="760" y="120" width="260" height="190" as="geometry"/></mxCell>
+        <mxCell id="problem" value="problem_products\nPK problem_id\nshop_id\nitem_id\nreason\nseverity\nstatus\ncreated_at" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1" vertex="1" parent="1"><mxGeometry x="1080" y="120" width="250" height="180" as="geometry"/></mxCell>
+        <mxCell id="runs" value="model_runs\nPK model_run_id\nstatus\nis_champion\nsource_prefix\nmodel_uri\nforecast_uri\nmetrics_uri\nweighted_mae\nweighted_naive_mae" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1" vertex="1" parent="1"><mxGeometry x="270" y="430" width="310" height="220" as="geometry"/></mxCell>
+        <mxCell id="seg" value="model_segment_metrics\nPK id\nFK model_run_id\nsegment_key\nn\nmae\nnaive_mae\nbeats_naive_rate" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1" vertex="1" parent="1"><mxGeometry x="690" y="430" width="300" height="190" as="geometry"/></mxCell>
+        <mxCell id="item" value="model_item_metrics\nPK id\nFK model_run_id\nitem_id\nsegment_key\nn\ny_true_mean\npred_mean\nmae\nnaive_mae" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1" vertex="1" parent="1"><mxGeometry x="1040" y="430" width="300" height="220" as="geometry"/></mxCell>
+        <mxCell id="data" value="data_batches\nPK batch_id\ns3_uri\nstatus\nrecords_count\ncreated_at\nnotes" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1" vertex="1" parent="1"><mxGeometry x="80" y="430" width="200" height="170" as="geometry"/></mxCell>
+        <mxCell id="e1" value="1:N" style="endArrow=block;html=1;strokeWidth=2" edge="1" parent="1" source="runs" target="seg"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e2" value="1:N" style="endArrow=block;html=1;strokeWidth=2" edge="1" parent="1" source="runs" target="item"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e3" value="produces" style="endArrow=block;html=1;strokeWidth=2;dashed=1" edge="1" parent="1" source="data" target="runs"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
