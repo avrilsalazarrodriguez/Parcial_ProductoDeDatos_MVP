@@ -555,7 +555,7 @@ docker build --network sagemaker -t pfs-mvp-streamlit:latest .
 
 Este comando construye la imagen Docker de la aplicación Streamlit usando el Dockerfile del proyecto.
 
-La opción La opción `--network sagemaker` se usa porque el build se ejecutó desde SageMaker Studio y permite que Docker tenga acceso de red durante la instalación de dependencias.
+La opción `--network sagemaker` se usa porque el build se ejecutó desde SageMaker Studio y permite que Docker tenga acceso de red durante la instalación de dependencias.
 
 ### 2. Subir imagen a ECR
 
