@@ -1,2 +1,0 @@
-model_name,model_type,artifact_path,rmse_model,rmse_naive,mae_model,notes
-predict_future_sales_lgbm_two_stage,LightGBM classifier + regressor,artifacts/model.joblib,0.8483537435531616,1.0083650350570679,0.2798999547958374,Modelo reutilizado de tareas previas. La app usa inferencia in-process con @st.cache_resource y batch precomputado para responder rápido.

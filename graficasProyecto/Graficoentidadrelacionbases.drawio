@@ -1,0 +1,223 @@
+<mxfile host="app.diagrams.net" agent="OpenAI" pages="3">
+  <diagram id="er_principal_del_glue_catalog" name="ER principal del Glue Catalog">
+    <mxGraphModel dx="2490" dy="1194" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1400" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title_er_principal_del_glue_catalog" parent="1" style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontFamily=Helvetica;fontSize=24;fontColor=#0f172a;" value="&lt;div style=&quot;font-size: 28px; font-weight: 700; color: rgb(15, 23, 42);&quot;&gt;Diagrama Entidad Relación de los datos consumidos en la APP.&lt;/div&gt;" vertex="1">
+          <mxGeometry height="40" width="1500" x="40" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle_er_principal_del_glue_catalog" parent="1" style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontFamily=Helvetica;fontSize=13;fontColor=#475569;" value="&lt;div style=&quot;font-size: 14px; color: rgb(71, 85, 105);&quot;&gt;Tablas principales del Glue Catalog, ModelOps, batch CFO y carga batch del MVP.&lt;/div&gt;" vertex="1">
+          <mxGeometry height="30" width="1800" x="40" y="58" as="geometry" />
+        </mxCell>
+        <mxCell id="features" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#1d4ed8;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;&#xa;      &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#1d4ed8;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;features&lt;/div&gt;&#xa;      &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;Grano: shop_id + item_id + date_block_num&lt;/i&gt;&lt;/div&gt;&#xa;      &lt;div&gt;PK shop_id&lt;br/&gt;PK item_id&lt;br/&gt;PK date_block_num&lt;br/&gt;FK item_category_id&lt;br/&gt;cnt_lag_1 .. cnt_lag_12&lt;br/&gt;sum_3, mean_3, std_3, max_3&lt;br/&gt;nonzero_rate_6 / nz_3&lt;br/&gt;recency&lt;br/&gt;price_missing_last&lt;br/&gt;trend_1_12, ratio_1_12&lt;br/&gt;sold_cum_lag1, log_sales_cum_lag1&lt;/div&gt;&#xa;    &lt;/div&gt;" vertex="1">
+          <mxGeometry height="340" width="320" x="40" y="130" as="geometry" />
+        </mxCell>
+        <mxCell id="forecast_detail" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#2563eb;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;&#xa;      &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#2563eb;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;forecast_detail_parquet&lt;/div&gt;&#xa;      &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;Pronósticos a nivel producto-tienda&lt;/i&gt;&lt;/div&gt;&#xa;      &lt;div&gt;PK shop_id&lt;br/&gt;PK item_id&lt;br/&gt;FK item_category_id&lt;br/&gt;shop_name&lt;br/&gt;item_name&lt;br/&gt;item_category_name&lt;br/&gt;category_group&lt;br/&gt;prediction&lt;br/&gt;model_id / model_name&lt;br/&gt;model_scope&lt;br/&gt;routing_reason&lt;br/&gt;pred_champion&lt;br/&gt;pred_naive_lag1&lt;br/&gt;pred_rolling_mean_3&lt;br/&gt;pred_specialist_recurrent&lt;/div&gt;&#xa;    &lt;/div&gt;" vertex="1">
+          <mxGeometry height="380" width="380" x="520" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="forecast_summary" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#ea580c;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;&#xa;      &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#ea580c;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;forecast_summary_by_category_parquet&lt;/div&gt;&#xa;      &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;Agregado de forecast por categoría&lt;/i&gt;&lt;/div&gt;&#xa;      &lt;div&gt;PK item_category_id&lt;br/&gt;item_category_name&lt;br/&gt;category_group&lt;br/&gt;n_items&lt;br/&gt;forecast_units&lt;br/&gt;avg_prediction&lt;/div&gt;&#xa;    &lt;/div&gt;" vertex="1">
+          <mxGeometry height="220" width="380" x="1070" y="70" as="geometry" />
+        </mxCell>
+        <mxCell id="eval_item" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ecfdf5;strokeColor=#059669;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;&#xa;      &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#059669;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;evaluation_by_item_parquet&lt;/div&gt;&#xa;      &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;Agregado de evaluación por producto&lt;/i&gt;&lt;/div&gt;&#xa;      &lt;div&gt;PK item_id&lt;br/&gt;item_name&lt;br/&gt;n&lt;br/&gt;y_mean&lt;br/&gt;pred_mean&lt;br/&gt;mae&lt;br/&gt;rmse&lt;br/&gt;wape / smape&lt;/div&gt;&#xa;    &lt;/div&gt;" vertex="1">
+          <mxGeometry height="260" width="360" x="1070" y="330" as="geometry" />
+        </mxCell>
+        <mxCell id="eval_segment" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ecfdf5;strokeColor=#059669;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;&#xa;      &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#059669;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;evaluation_by_segment_parquet&lt;/div&gt;&#xa;      &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;Agregado de evaluación por categoría/segmento&lt;/i&gt;&lt;/div&gt;&#xa;      &lt;div&gt;PK item_category_id o segment_key&lt;br/&gt;item_category_name / segment_name&lt;br/&gt;category_group&lt;br/&gt;n&lt;br/&gt;y_mean&lt;br/&gt;pred_mean&lt;br/&gt;mae&lt;br/&gt;rmse&lt;br/&gt;wape / smape&lt;br/&gt;bias&lt;/div&gt;&#xa;    &lt;/div&gt;" vertex="1">
+          <mxGeometry height="320" width="380" x="1210" y="940" as="geometry" />
+        </mxCell>
+        <mxCell id="model_runs" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f3ff;strokeColor=#7c3aed;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;&#xa;      &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#7c3aed;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;model_runs.csv&lt;/div&gt;&#xa;      &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;Registro de candidatos evaluados&lt;/i&gt;&lt;/div&gt;&#xa;      &lt;div&gt;PK model_id&lt;br/&gt;model_name&lt;br/&gt;status / is_champion&lt;br/&gt;rmse&lt;br/&gt;mae&lt;br/&gt;smape&lt;br/&gt;wape&lt;br/&gt;bias&lt;br/&gt;nonzero_recall&lt;br/&gt;descripción&lt;/div&gt;&#xa;    &lt;/div&gt;" vertex="1">
+          <mxGeometry height="300" width="350" x="1550" y="170" as="geometry" />
+        </mxCell>
+        <mxCell id="champion" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fefce8;strokeColor=#ca8a04;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;&#xa;      &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#ca8a04;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;champion_json&lt;/div&gt;&#xa;      &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;Selección final del champion&lt;/i&gt;&lt;/div&gt;&#xa;      &lt;div&gt;model_id&lt;br/&gt;model_name&lt;br/&gt;selection_policy&lt;br/&gt;rmse&lt;br/&gt;mae&lt;br/&gt;created_at&lt;br/&gt;run metadata&lt;/div&gt;&#xa;    &lt;/div&gt;" vertex="1">
+          <mxGeometry height="250" width="330" x="1570" y="600" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" edge="1" parent="1" source="features" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.991;exitY=0.547;exitDx=0;exitDy=0;exitPerimeter=0;" target="forecast_detail" value="1:N genera pronóstico">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="380" y="310" as="sourcePoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e2" edge="1" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="1:N une variables con valor real">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="465" y="330" />
+              <mxPoint x="465" y="870" />
+            </Array>
+            <mxPoint x="365" y="330" as="sourcePoint" />
+            <mxPoint x="515" y="870" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e3" edge="1" parent="1" source="forecast_detail" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" target="forecast_summary" value="N:1 agrega por categoría">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" edge="1" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" target="eval_item" value="N:1 agrega por producto">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="940" y="890" as="sourcePoint" />
+            <mxPoint x="1245" y="640" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e5" edge="1" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" target="eval_segment" value="N:1 agrega por categoría / segmento">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="950" y="1100" as="sourcePoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e6" edge="1" parent="1" source="model_runs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" target="champion" value="1:1 selecciona modelo campeón">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1725" y="500" />
+              <mxPoint x="1725" y="500" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e7" edge="1" parent="1" source="champion" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" target="forecast_detail" value="1:N etiqueta modelo usado">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" edge="1" parent="1" source="champion" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;exitX=0;exitY=0.25;exitDx=0;exitDy=0;" target="evaluation_detail" value="1:N documenta corrida evaluada">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1570" y="800" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="evaluation_detail" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#dc2626;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;&#xa;      &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#dc2626;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;evaluation_detail_parquet&lt;/div&gt;&#xa;      &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;Evaluación fila a fila contra ground truth&lt;/i&gt;&lt;/div&gt;&#xa;      &lt;div&gt;PK shop_id&lt;br/&gt;PK item_id&lt;br/&gt;PK date_block_num&lt;br/&gt;FK item_category_id&lt;br/&gt;y (ground truth)&lt;br/&gt;prediction&lt;br/&gt;naive_prediction&lt;br/&gt;error_signed&lt;br/&gt;abs_error&lt;br/&gt;model_scope&lt;br/&gt;routing_reason&lt;br/&gt;pred_champion / pred_naive_lag1&lt;br/&gt;pred_rolling_mean_3 / pred_specialist_recurrent&lt;/div&gt;&#xa;    &lt;/div&gt;" vertex="1">
+          <mxGeometry height="400" width="430" x="515" y="760" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="lineage_y_agregados_del_producto_de_datos" name="Lineage y agregados del producto de datos">
+    <mxGraphModel dx="1500" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1400" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title_lineage_y_agregados_del_producto_de_datos" value="&lt;div style=&quot;font-size:28px;font-weight:700;color:#0f172a;&quot;&gt;Lineage y agregados del producto de datos&lt;/div&gt;" style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontFamily=Helvetica;fontSize=24;fontColor=#0f172a;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="1500" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle_lineage_y_agregados_del_producto_de_datos" value="&lt;div style=&quot;font-size:14px;color:#475569;&quot;&gt;Diagrama editable en draw.io. Resume tablas visibles en Glue Catalog y sus relaciones lógicas más importantes para el MVP.&lt;/div&gt;" style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontFamily=Helvetica;fontSize=13;fontColor=#475569;" vertex="1" parent="1">
+          <mxGeometry x="40" y="58" width="1800" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="b_features" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;&#xa;      &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#1d4ed8;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;Capa 1 — features&lt;/div&gt;&#xa;      &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;Tabla base en Glue / Parquet&lt;/i&gt;&lt;/div&gt;&#xa;      &lt;div&gt;features&lt;br/&gt;&lt;br/&gt;Entrada del modelo serializado y del batch upload&lt;br/&gt;Contiene lags, recency, rolling stats, señales acumuladas&lt;br/&gt;Es el punto de unión para scoring y evaluación&lt;/div&gt;&#xa;    &lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#1d4ed8;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="80" y="170" width="420" height="260" as="geometry" />
+        </mxCell>
+        <mxCell id="b_forecast" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;&#xa;      &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#1d4ed8;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;Capa 2 — pronóstico operacional&lt;/div&gt;&#xa;      &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;Glue table: forecast_detail_parquet&lt;/i&gt;&lt;/div&gt;&#xa;      &lt;div&gt;Predicciones a nivel shop-item&lt;br/&gt;Consume features&lt;br/&gt;Alimenta Batch CFO, Resumen, KPIs y batch upload&lt;/div&gt;&#xa;    &lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#1d4ed8;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="620" y="120" width="420" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="b_eval" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;&#xa;      &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#dc2626;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;Capa 2 — evaluación detallada&lt;/div&gt;&#xa;      &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;Glue table: evaluation_detail_parquet&lt;/i&gt;&lt;/div&gt;&#xa;      &lt;div&gt;Ground truth + prediction + naive&lt;br/&gt;Base para análisis de error&lt;br/&gt;Alimenta Feedback, Evaluación y métricas&lt;/div&gt;&#xa;    &lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef2f2;strokeColor=#dc2626;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="620" y="430" width="420" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="b_agg_forecast" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;&#xa;      &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#ea580c;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;Capa 3 — agregados de forecast&lt;/div&gt;&#xa;      &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;Glue table: forecast_summary_by_category_parquet&lt;/i&gt;&lt;/div&gt;&#xa;      &lt;div&gt;Pronóstico total por categoría&lt;br/&gt;Vista para CFO y Resumen ejecutivo&lt;br/&gt;Permite particionar exports por category_id&lt;/div&gt;&#xa;    &lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#ea580c;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="1170" y="90" width="420" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="b_agg_item" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;&#xa;      &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#059669;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;Capa 3 — agregados por producto&lt;/div&gt;&#xa;      &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;Glue table: evaluation_by_item_parquet&lt;/i&gt;&lt;/div&gt;&#xa;      &lt;div&gt;RMSE / MAE / WAPE por item&lt;br/&gt;Top productos con mayor error&lt;/div&gt;&#xa;    &lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ecfdf5;strokeColor=#059669;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="1170" y="400" width="420" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="b_agg_seg" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;&#xa;      &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#059669;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;Capa 3 — agregados por segmento&lt;/div&gt;&#xa;      &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;Glue table: evaluation_by_segment_parquet&lt;/i&gt;&lt;/div&gt;&#xa;      &lt;div&gt;RMSE / MAE / WAPE por categoría o segment_key&lt;br/&gt;Top categorías / segmentos con mayor error&lt;/div&gt;&#xa;    &lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ecfdf5;strokeColor=#059669;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="1170" y="680" width="420" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="b_registry" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;&#xa;      &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#7c3aed;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;Capa 4 — registry&lt;/div&gt;&#xa;      &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;Glue / CSV / JSON&lt;/i&gt;&lt;/div&gt;&#xa;      &lt;div&gt;model_runs.csv&lt;br/&gt;champion_json&lt;br/&gt;&lt;br/&gt;Expone champion, challengers y política de selección&lt;br/&gt;Soporta Model Registry en la UI&lt;/div&gt;&#xa;    &lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f3ff;strokeColor=#7c3aed;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="1750" y="220" width="330" height="250" as="geometry" />
+        </mxCell>
+        <mxCell id="b_ui" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;&#xa;      &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#0f172a;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;Capa 5 — consumo en la app&lt;/div&gt;&#xa;      &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;Streamlit&lt;/i&gt;&lt;/div&gt;&#xa;      &lt;div&gt;Resumen&lt;br/&gt;Batch CFO&lt;br/&gt;Evaluación&lt;br/&gt;KPIs&lt;br/&gt;Feedback&lt;br/&gt;Model Registry&lt;/div&gt;&#xa;    &lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#0f172a;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="1750" y="620" width="330" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="l1" value="genera predicción con variables" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="b_features" target="b_forecast">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="l2" value="une por tienda + producto + mes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="b_features" target="b_eval">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="l3" value="agrega pronóstico por categoría" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="b_forecast" target="b_agg_forecast">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="l4" value="calcula métricas por producto" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="b_eval" target="b_agg_item">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="l5" value="calcula métricas por segmento" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="b_eval" target="b_agg_seg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="l6" value="aplica metadatos del modelo campeón" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="b_registry" target="b_forecast">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="l7" value="documenta modelo evaluado" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="b_registry" target="b_eval">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="l8" value="consulta resumen de pronóstico" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="b_agg_forecast" target="b_ui">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="l9" value="consulta KPIs por producto" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="b_agg_item" target="b_ui">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="l10" value="consulta KPIs por segmento" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="b_agg_seg" target="b_ui">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="l11" value="consulta registro / modelo campeón" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="b_registry" target="b_ui">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="l12" value="consulta predicciones operativas" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="b_forecast" target="b_ui">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="l13" value="consulta evaluación y errores" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="b_eval" target="b_ui">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="particiones_operacionales_en_s3" name="Particiones operacionales en S3">
+    <mxGraphModel dx="1500" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title_particiones_operacionales_en_s3" value="&lt;div style=&quot;font-size:28px;font-weight:700;color:#0f172a;&quot;&gt;Particiones operacionales en S3&lt;/div&gt;" style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontFamily=Helvetica;fontSize=24;fontColor=#0f172a;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="1500" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle_particiones_operacionales_en_s3" value="&lt;div style=&quot;font-size:14px;color:#475569;&quot;&gt;Particiones finales en S3: CFO se particiona por tienda/categoría; predicciones cargadas se guardan en una carpeta común.&lt;/div&gt;" style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontFamily=Helvetica;fontSize=13;fontColor=#475569;" vertex="1" parent="1">
+          <mxGeometry x="40" y="58" width="1800" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="o_forecast" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;&#xa;      &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#1d4ed8;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;forecast_detail / batch_df&lt;/div&gt;&#xa;      &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;Dataframe operativo base&lt;/i&gt;&lt;/div&gt;&#xa;      &lt;div&gt;Predicción por producto-tienda&lt;br/&gt;Contiene category_id, names, model_scope, routing_reason&lt;br/&gt;Fuente para CFO exports y batch upload&lt;/div&gt;&#xa;    &lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#1d4ed8;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="220" width="370" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="o_shop" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;       &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#0f766e;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;CFO export por tienda&lt;/div&gt;       &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;Partición S3 por tienda seleccionada&lt;/i&gt;&lt;/div&gt;       &lt;div&gt;app/batch_exports/todos_los_productos_de_una_tienda/&lt;br/&gt;shop_&amp;lt;shop_id&amp;gt;/&lt;br/&gt;predictions_&amp;lt;timestamp&amp;gt;.csv&lt;br/&gt;&lt;br/&gt;Incluye forecast CFO de todos los productos de una tienda.&lt;/div&gt;     &lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#ea580c;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="540" y="90" width="400" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="o_cat" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;       &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#0f766e;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;CFO export por categoría&lt;/div&gt;       &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;Partición S3 por segmento/categoría seleccionada&lt;/i&gt;&lt;/div&gt;       &lt;div&gt;app/batch_exports/segmento_categoria/&lt;br/&gt;category_&amp;lt;item_category_id&amp;gt;/&lt;br/&gt;predictions_&amp;lt;timestamp&amp;gt;.csv&lt;br/&gt;&lt;br/&gt;Incluye segment_id, item_category_id, item_category_name y category_group cuando están disponibles.&lt;/div&gt;     &lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#ea580c;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="540" y="360" width="400" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="o_all" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;       &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#0f766e;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;CFO export catálogo completo&lt;/div&gt;       &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;Partición S3 única para todo el catálogo&lt;/i&gt;&lt;/div&gt;       &lt;div&gt;app/batch_exports/catalogo_completo/all/&lt;br/&gt;predictions_&amp;lt;timestamp&amp;gt;.csv&lt;br/&gt;&lt;br/&gt;Export CFO con todos los pares producto-tienda del catálogo.&lt;/div&gt;     &lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#ea580c;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="540" y="630" width="400" height="210" as="geometry" />
+        </mxCell>
+        <mxCell id="o_up_pred" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;       &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#2563eb;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;Predicción por archivo cargado&lt;/div&gt;       &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;Prefijo exclusivo, sin particionar por categoría&lt;/i&gt;&lt;/div&gt;       &lt;div&gt;app/batch_uploads/predictions/&lt;br/&gt;uploaded_batch_predictions_&amp;lt;timestamp&amp;gt;_&amp;lt;archivo&amp;gt;.csv&lt;br/&gt;&lt;br/&gt;Usa CSV tipo test/validación o features completas. Puede aplicar política híbrida: inactive, naive, especialista recurrente o HGB.&lt;/div&gt;     &lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ecfdf5;strokeColor=#059669;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="220" width="430" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="o_up_hist" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;       &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#2563eb;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;Historial exclusivo de carga batch&lt;/div&gt;       &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;No mezcla archivos CFO normales&lt;/i&gt;&lt;/div&gt;       &lt;div&gt;app/batch_uploads/history/&lt;br/&gt;uploaded_predictions_history.csv&lt;br/&gt;&lt;br/&gt;Registra source_file, records_count, total_prediction, s3_uri y modo de completado de features.&lt;/div&gt;     &lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ecfdf5;strokeColor=#059669;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="560" width="430" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="o_rds" value="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.35;color:#0f172a;&quot;&gt;       &lt;div style=&quot;font-size:15px;font-weight:700;color:#ffffff;background:#334155;padding:6px 8px;border-radius:8px 8px 0 0;margin:-8px -8px 8px -8px;&quot;&gt;RDS operacional&lt;/div&gt;       &lt;div style=&quot;font-size:11px;color:#334155;margin-bottom:6px;&quot;&gt;&lt;i&gt;Metadata de uso / feedback / historial&lt;/i&gt;&lt;/div&gt;       &lt;div&gt;feedback del negocio&lt;br/&gt;historial batch CFO&lt;br/&gt;scope / shop_id / category_id&lt;br/&gt;records_count&lt;br/&gt;total_prediction&lt;br/&gt;s3_uri&lt;br/&gt;timestamp&lt;/div&gt;     &lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef2f2;strokeColor=#dc2626;strokeWidth=2;align=left;verticalAlign=top;spacingTop=8;spacingLeft=8;spacingRight=8;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="1650" y="220" width="360" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="o1" value="filtra por shop_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="o_forecast" target="o_shop">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="o2" value="filtra por item_category_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="o_forecast" target="o_cat">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="o3" value="exporta catálogo completo" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="o_forecast" target="o_all">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="o4" value="genera predicción desde CSV cargado" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="o_forecast" target="o_up_pred">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="o5" value="registra historial exclusivo" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="o_up_pred" target="o_up_hist">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="o6" value="registra historial CFO en RDS" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="o_shop" target="o_rds">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="o7" value="registra historial CFO en RDS" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="o_cat" target="o_rds">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="o8" value="registra historial CFO en RDS" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="o_all" target="o_rds">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
