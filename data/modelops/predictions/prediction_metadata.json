@@ -1,6 +1,0 @@
-{
-  "n_predictions": 214200,
-  "output_dir": "data/modelops/predictions",
-  "n_segment_models": 5,
-  "submission_column": "item_cnt_month"
-}

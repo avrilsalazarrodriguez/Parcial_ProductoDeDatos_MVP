@@ -1,858 +1,547 @@
-# README — Handoff de ModelOps y rutas para integración con Streamlit
+# Producto de Datos — Pronóstico de Ventas 1C Company en AWS
 
-## 1. Objetivo de este README
+> MVP de producto de datos para consultar pronósticos mensuales de ventas, generar archivos para negocio/CFO, evaluar modelos, registrar feedback operativo y mantener trazabilidad de ModelOps en AWS.
 
-Este documento resume lo que se hizo en la rama de modelos, qué rutas S3 debe consumir el dashboard de Streamlit, qué recursos AWS quedaron creados y qué falta para cerrar la integración del MVP.
-
-La idea central de esta parte es separar el cómputo pesado del dashboard:
-
-```text
-Datos CSV reales
-  ↓
-S3 raw/current/
-  ↓
-SageMaker Processing
-  ↓
-Feature engineering + entrenamiento + evaluación + batch scoring
-  ↓
-S3 modelops/features/
-S3 modelops/model/
-S3 modelops/evaluation/
-S3 modelops/predictions/
-  ↓
-Glue Data Catalog
-  ↓
-Streamlit consume forecast y métricas como tablas precomputadas
-```
-
-Esto evita que Streamlit entrene o prediga todo en cada clic. El dashboard solo debe leer resultados ya calculados.
+<p align="center">
+  <img src="graficasProyecto/apppublica.png" alt="Aplicación pública Streamlit en AWS" width="900">
+</p>
 
 ---
 
-## 2. Rama y contexto
+## Tabla de contenidos
 
-Rama de trabajo de modelos:
-
-```text
-feature/modelops-segmented-retraining
-```
-
-Rama base del dashboard/app:
-
-```text
-partial-mvp
-```
-
-Rama común de integración:
-
-```text
-develop
-```
-
-Flujo esperado de ramas:
-
-```text
-main
-  ↓
-develop
-  ↑
-feature/modelops-segmented-retraining
-  ↑
-partial-mvp / dashboard work
-```
-
-Este README está pensado para incluirse en el repo y compartirlo con la compañera que desarrolla Streamlit.
+1. [Contexto de negocio](#contexto-de-negocio)
+2. [Qué hace el producto](#qué-hace-el-producto)
+3. [Arquitectura general](#arquitectura-general)
+4. [Modelo de datos y entidad-relación](#modelo-de-datos-y-entidad-relación)
+5. [Tecnologías utilizadas y evidencias AWS](#tecnologías-utilizadas-y-evidencias-aws)
+6. [Vistas de la aplicación](#vistas-de-la-aplicación)
+7. [ModelOps y política híbrida](#modelops-y-política-híbrida)
+8. [Inputs y outputs](#inputs-y-outputs)
+9. [Estructura del repositorio](#estructura-del-repositorio)
+10. [Instalación local](#instalación-local)
+11. [Ejecución local](#ejecución-local)
+12. [Despliegue en AWS](#despliegue-en-aws)
+13. [Operación, estabilidad y seguridad](#operación-estabilidad-y-seguridad)
+14. [Documentación metodológica](#documentación-metodológica)
+15. [Limitaciones y siguientes pasos](#limitaciones-y-siguientes-pasos)
+16. [Bibliografía y recursos consultados](#bibliografía-y-recursos-consultados)
+17. [Autores](#autores)
 
 ---
 
-## 3. Cambios hechos en la parte de modelos
+## Contexto de negocio
 
-### 3.1 Paquete principal de ModelOps
+El proyecto parte del problema de pronosticar ventas mensuales de **1C Company** a nivel **tienda-producto**. La meta no fue ganar la competencia original de Kaggle, sino convertir un flujo de machine learning en un **producto de datos operable** por usuarios de negocio.
 
-Se agregó el paquete:
+El MVP permite que perfiles de negocio consulten predicciones, descarguen archivos para planeación financiera, revisen desempeño del modelo y registren observaciones sin abrir notebooks ni ejecutar código localmente.
 
-```text
-modelops/
-```
+| Stakeholder | Necesidad | Respuesta del MVP |
+|---|---|---|
+| Planeación de demanda | Consultar pronósticos por tienda, producto o categoría. | App Streamlit pública con filtros, KPIs y vistas de evaluación. |
+| Finanzas / CFO | Descargar archivos batch de forecast. | Vista **Batch CFO** con descarga CSV, guardado en S3 e historial. |
+| Applied Scientist | Comparar modelos y revisar errores. | Model Registry, curvas de evaluación, RMSE/MAE y comparación contra naive. |
+| Operaciones / Inventarios | Detectar productos con baja actividad o riesgo de sub/sobreestimación. | KPIs, Feedback y tablas de productos problemáticos. |
+| Plataforma / CTO | Ejecutar una app estable y reproducible en nube. | Docker, Amazon ECR, Amazon ECS Fargate, ALB, CloudFormation, Amazon RDS, Amazon S3 y CloudWatch. |
+| Seguridad | Evitar credenciales en código. | AWS Secrets Manager, variables de entorno y roles IAM con permisos por prefijo. |
 
-Archivos esperados:
+---
 
-```text
-modelops/__init__.py
-modelops/config.py
-modelops/feature_builder.py
-modelops/io.py
-modelops/score_batch.py
-modelops/segments.py
-modelops/train_segmented.py
-```
+## Qué hace el producto
 
-Propósito de cada archivo:
+La aplicación permite:
 
-| Archivo | Propósito |
+- Consultar forecast mensual por tienda y producto.
+- Generar archivos CFO para:
+  - todos los productos de una tienda;
+  - una categoría/segmento específico;
+  - el catálogo completo.
+- Guardar archivos CFO en Amazon S3 con estructura por alcance.
+- Subir un CSV estilo test (`ID`, `shop_id`, `item_id`) o con features completas para generar inferencia batch ad hoc.
+- Guardar predicciones cargadas en Amazon S3 bajo una carpeta separada de los archivos CFO.
+- Evaluar modelos contra ground truth histórico.
+- Comparar modelos contra naive, promedio móvil, LightGBM original, Hurdle HGB, Poisson y router híbrido.
+- Registrar feedback de negocio para revisión posterior.
+- Consultar un Model Registry ligero con métricas, descripciones y modelo champion.
+
+---
+
+## Arquitectura general
+
+La arquitectura separa tres responsabilidades:
+
+1. **Capa de consumo:** aplicación Streamlit desplegada en Amazon ECS Fargate y expuesta mediante Application Load Balancer.
+2. **Capa de persistencia:** Amazon S3 para archivos/artefactos y Amazon RDS PostgreSQL para historial, eventos y feedback.
+3. **Capa de ModelOps:** artefactos, predicciones, métricas, curvas de evaluación, model registry y modelo champion.
+
+<p align="center">
+  <img src="graficasProyecto/infraestructura_a1.png" alt="Diagrama de arquitectura general del MVP en AWS" width="950">
+</p>
+
+**Lectura del diagrama de infraestructura.** El usuario entra por el **Application Load Balancer**, que enruta tráfico hacia la app en **Amazon ECS Fargate**. La imagen Docker vive en **Amazon ECR**. La app consume artefactos vigentes desde **Amazon S3**, registra información operacional en **Amazon RDS PostgreSQL**, obtiene credenciales desde **AWS Secrets Manager** y deja trazabilidad en **Amazon CloudWatch Logs**. **AWS Glue Data Catalog** funciona como capa de metadatos sobre los archivos analíticos en S3.
+
+La infraestructura fue desplegada con **AWS CloudFormation**, de forma que los recursos principales pueden recrearse con plantillas y scripts, evitando configuraciones manuales dispersas.
+
+---
+
+## Modelo de datos y entidad-relación
+
+El modelo de datos se divide en dos capas:
+
+- **Capa analítica en Amazon S3 + AWS Glue Data Catalog:** contiene features, forecast, evaluación, curvas, métricas y Model Registry.
+- **Capa operacional en Amazon RDS PostgreSQL:** contiene feedback, historial de archivos, eventos de uso y metadatos operativos.
+
+<p align="center">
+  <img src="graficasProyecto/ER1transpa.png" alt="Diagrama entidad-relación principal del Glue Catalog" width="950">
+</p>
+
+**Lectura del diagrama entidad-relación.** La tabla `features` alimenta el scoring. De ahí se construye `forecast_detail`, que contiene la predicción final y su trazabilidad. Cuando existe valor real observado, `evaluation_detail` permite calcular errores. A partir de esa evaluación se generan agregados por producto, categoría, tienda y modelo. El Model Registry queda representado mediante `model_runs.csv` y `champion.json`.
+
+### Artefactos analíticos principales
+
+| Artefacto | Propósito | Uso en la app |
+|---|---|---|
+| `features` | Variables explicativas: lags, medias móviles, recencia, frecuencia, precio y señales acumuladas. | Inferencia individual, batch cargado y scoring. |
+| `forecast_detail` | Predicción final por tienda-producto con `model_scope`, `routing_reason` y candidatos. | Resumen, Batch CFO, KPIs. |
+| `evaluation_detail` | Comparación fila a fila contra `y` real. | Evaluación, Feedback, análisis de errores. |
+| `evaluation_by_item` | Métricas por producto. | Evaluación y KPIs. |
+| `evaluation_by_segment` | Métricas por categoría/segmento. | KPIs y lectura por grupo. |
+| `evaluation_curves_by_model` | Curvas de promedio real vs promedio predicho por rango de demanda. | Evaluación y comparación de modelos. |
+| `model_runs.csv` | Corridas evaluadas y métricas. | Model Registry. |
+| `champion.json` | Modelo vigente y política de selección. | Resumen y Model Registry. |
+| `review_suggestions.parquet` | Productos sugeridos para revisión. | Feedback. |
+
+### Tablas operacionales en RDS
+
+| Tabla | Propósito | Uso en la app |
+|---|---|---|
+| `business_feedback` | Observaciones del negocio sobre productos, tiendas o categorías. | Pestaña Feedback. |
+| `problem_products` | Productos o pares tienda-producto sugeridos para revisión. | Feedback y priorización operativa. |
+| `batch_exports` | Historial de archivos CFO generados. | Batch CFO. |
+| `app_usage_events` | Eventos de uso y acciones relevantes. | Monitoreo operativo. |
+| `model_metadata` | Metadatos complementarios de modelos. | Model Registry / operación. |
+
+---
+
+## Tecnologías utilizadas y evidencias AWS
+
+| Capa | Tecnología | Uso |
+|---|---|---|
+| UI | **Streamlit** | Aplicación web de consulta, forecast, evaluación, KPIs y feedback. |
+| Contenedores | **Docker** | Empaquetado reproducible de la aplicación. |
+| Registry | **Amazon ECR** | Almacenamiento de la imagen Docker. |
+| Cómputo app | **Amazon ECS Fargate** | Ejecución serverless del contenedor. |
+| Exposición pública | **Application Load Balancer** | URL pública y balanceo hacia ECS. |
+| Persistencia analítica | **Amazon S3** | ModelOps, predicciones, CFO exports, batch uploads, métricas y artefactos. |
+| Base operacional | **Amazon RDS PostgreSQL** | Feedback, historial, eventos y metadata operacional. |
+| Credenciales | **AWS Secrets Manager** | Secreto de conexión a RDS. |
+| Logs | **Amazon CloudWatch Logs** | Depuración, reinicios, permisos y errores. |
+| Catálogo | **AWS Glue Data Catalog** | Metadatos de tablas analíticas sobre S3. |
+| Infraestructura | **AWS CloudFormation** | Despliegue reproducible de recursos. |
+| Python env | **uv** | Administración rápida de dependencias y ejecución. |
+| ML | **scikit-learn / HGB / LightGBM** | Modelos candidatos, baselines y política híbrida. |
+| Data | **pandas / pyarrow** | Manipulación y lectura/escritura de CSV/Parquet. |
+| AWS SDK | **boto3** | Lectura/escritura en S3 y operación AWS desde Python. |
+
+### Capturas reales de recursos AWS
+
+| Recurso | Captura | Archivo esperado |
+|---|---|---|
+| Aplicación pública Streamlit | Endpoint público del MVP | `graficasProyecto/apppublica.png` |
+| Amazon ECS Fargate | Servicio ECS con task corriendo | `graficasProyecto/RecursosECSFargate.png` |
+| Amazon ECR | Repositorio con imagen Docker | `graficasProyecto/RecursosECR.png` |
+| AWS CloudFormation | Stacks de infraestructura | `graficasProyecto/RecursosCloudFormation.png` |
+| Amazon RDS PostgreSQL | Instancia RDS disponible | `graficasProyecto/RecursosRDSBueno.png` |
+| Amazon S3 | Bucket con exports, uploads y ModelOps | `graficasProyecto/RecursosS3.png` |
+| AWS Glue Data Catalog | Tablas registradas | `graficasProyecto/RecursosGlue.png` |
+| Amazon CloudWatch Logs | Logs del contenedor | `graficasProyecto/RecursosCloudwatch.png` |
+| AWS Secrets Manager | Secreto de RDS | `graficasProyecto/RecursosSecretmanager.jpeg` |
+
+<p align="center">
+  <img src="graficasProyecto/RecursosECSFargate.png" alt="Amazon ECS Fargate con la tarea de Streamlit corriendo" width="850">
+</p>
+
+<p align="center">
+  <img src="graficasProyecto/RecursosECR.png" alt="Amazon ECR con imagen Docker de la app" width="850">
+</p>
+
+<p align="center">
+  <img src="graficasProyecto/RecursosCloudFormation.png" alt="AWS CloudFormation con stacks del MVP" width="850">
+</p>
+
+<p align="center">
+  <img src="graficasProyecto/RecursosRDSBueno.png" alt="Amazon RDS PostgreSQL disponible" width="850">
+</p>
+
+<p align="center">
+  <img src="graficasProyecto/RecursosS3.png" alt="Amazon S3 con archivos CFO, predicciones cargadas y ModelOps" width="850">
+</p>
+
+<p align="center">
+  <img src="graficasProyecto/RecursosGlue.png" alt="AWS Glue Data Catalog con tablas analíticas" width="850">
+</p>
+
+<p align="center">
+  <img src="graficasProyecto/RecursosCloudwatch.png" alt="Amazon CloudWatch Logs del servicio ECS Streamlit" width="850">
+</p>
+
+<p align="center">
+  <img src="graficasProyecto/RecursosSecretmanager.jpeg" alt="AWS Secrets Manager con secreto de RDS" width="850">
+</p>
+
+---
+
+## Vistas de la aplicación
+
+### 1. Resumen
+
+La vista de Resumen muestra volumen de predicciones, modelo en uso, muestra de forecast, distribución de pronósticos, tiendas con mayor pronóstico, categorías con mayor pronóstico y cobertura por `model_scope`.
+
+<p align="center">
+  <img src="graficasProyecto/apppublica.png" alt="Vista Resumen de la aplicación pública" width="850">
+</p>
+
+### 2. Inferencia individual
+
+Permite consultar un par tienda-producto específico. El usuario puede buscar por ID o nombre y revisar la predicción puntual.
+
+<p align="center">
+  <img src="graficasProyecto/inferenciaindividual.png" alt="Vista de inferencia individual" width="850">
+</p>
+
+### 3. Batch CFO
+
+Genera archivos para negocio por tienda, categoría o catálogo completo. Los archivos CFO se guardan en Amazon S3 bajo `app/batch_exports/`, particionados por alcance.
+
+<p align="center">
+  <img src="graficasProyecto/batchcfo.png" alt="Batch CFO con selección de alcance y vista previa" width="850">
+</p>
+
+<p align="center">
+  <img src="graficasProyecto/batchcfo2.png" alt="Batch CFO con guardado en S3 e historial" width="850">
+</p>
+
+### 4. Batch por archivo cargado
+
+Permite subir un CSV con features completas o estilo test (`ID`, `shop_id`, `item_id`). Si el par existe en las features preparadas, la app completa columnas; si no existe, lo trata como cold-start conservador. Las predicciones cargadas se guardan en `app/batch_uploads/predictions/` sin particionar.
+
+<p align="center">
+  <img src="graficasProyecto/batchcfo3.png" alt="Batch por archivo cargado con inferencia y política híbrida" width="850">
+</p>
+
+<p align="center">
+  <img src="graficasProyecto/batch4.png" alt="Historial exclusivo de predicciones por archivo cargado" width="850">
+</p>
+
+### 5. Evaluación
+
+Compara modelos contra ground truth. Incluye curvas por rango de demanda real, distribución de demanda y tablas de performance por segmento/producto.
+
+<p align="center">
+  <img src="graficasProyecto/evaluacionseccion.png" alt="Vista de evaluación contra ground truth" width="850">
+</p>
+
+<p align="center">
+  <img src="graficasProyecto/evaluacion1_1.png" alt="Curvas de evaluación por modelo" width="850">
+</p>
+
+<p align="center">
+  <img src="graficasProyecto/distribuciondemanda.png" alt="Distribución de registros por rango de demanda real" width="750">
+</p>
+
+### 6. KPIs
+
+Muestra categorías, productos y tiendas con mayor RMSE. También incluye productos con baja actividad reciente, top tiendas con más productos de baja actividad y top categorías afectadas.
+
+<p align="center">
+  <img src="graficasProyecto/kpis2.png" alt="Vista KPIs con errores y baja actividad reciente" width="850">
+</p>
+
+<p align="center">
+  <img src="graficasProyecto/kpis1.png" alt="KPIs de RMSE por tienda categoría y producto" width="850">
+</p>
+
+### 7. Feedback
+
+Permite registrar observaciones del negocio y revisar productos sobreestimados, subestimados o sugeridos para revisión. Las tablas incluyen trazabilidad con `decision_recommendation`, `model_scope` y `routing_reason`.
+
+<p align="center">
+  <img src="graficasProyecto/feedback1.png" alt="Captura de feedback de negocio" width="850">
+</p>
+
+<p align="center">
+  <img src="graficasProyecto/feedback3.png" alt="Productos sugeridos para revisión" width="850">
+</p>
+
+### 8. Model Registry
+
+Muestra el modelo champion, métricas y corridas evaluadas. Conserva LightGBM original como incumbent, Hurdle HGB, HGB Poisson, especialista recurrente, rolling mean, promedio histórico y naive.
+
+<p align="center">
+  <img src="graficasProyecto/modelregistry.png" alt="Model Registry con historial de modelos y métricas" width="850">
+</p>
+
+---
+
+## ModelOps y política híbrida
+
+La demanda tiene muchos ceros y distintos regímenes. Por eso el MVP no usa un único modelo para todos los casos. Se conserva un Model Registry con modelos y baselines, y se usa una política híbrida que registra su decisión por fila.
+
+| Ruta | Interpretación |
 |---|---|
-| `modelops/config.py` | Configuración de features, columnas numéricas y parámetros mínimos del flujo. |
-| `modelops/io.py` | Funciones de lectura/escritura local y S3. |
-| `modelops/segments.py` | Construcción de segmentos usando `item_category_id` / `item_category_name`, con fallback derivado si no hay metadata. |
-| `modelops/feature_builder.py` | Genera features mensuales desde ventas, test y metadata traducida. |
-| `modelops/train_segmented.py` | Entrena modelo global y modelos por categoría/segmento; evalúa contra baseline naive. |
-| `modelops/score_batch.py` | Genera forecast batch, summaries y `submission.csv`. |
+| `inactive:no_recent_sales` | Producto-tienda con baja o nula actividad reciente. Predicción conservadora. |
+| `baseline:naive_recent_demand` | Existe venta reciente; la señal del último periodo puede ser informativa. |
+| `specialist:recurrent_demand` | Señales históricas sugieren demanda recurrente. |
+| `challenger:hurdle_hgb` | Caso de demanda baja/intermitente donde se usa Hurdle HGB. |
+
+Columnas de trazabilidad:
+
+| Columna | Significado |
+|---|---|
+| `model_id` | Modelo o familia de modelo registrada. |
+| `model_scope` | Ruta o política que generó la predicción final. |
+| `routing_reason` | Regla histórica que activó esa ruta. |
+| `decision_recommendation` | Explicación amigable para negocio. |
 
 ---
 
-### 3.2 Scripts agregados
+## Inputs y outputs
 
-Se agregaron scripts para ejecución local, subida a S3 y ejecución en AWS:
+### Inputs principales
+
+- Datos históricos de ventas de 1C Company.
+- Features preparadas en `data/prep/` o artefactos publicados en S3.
+- Modelo serializado en `artifacts/model.joblib` para inferencia local dentro del contenedor.
+- Artefactos ModelOps publicados en S3.
+- CSV cargado por usuario en Batch CFO.
+
+### Outputs principales en S3
 
 ```text
-scripts/run_model_flow_local.py
-scripts/upload_model_inputs_to_s3.py
-scripts/run_model_flow_aws_jobs.py
+app/batch_exports/todos_los_productos_de_una_tienda/shop_<id>/
+app/batch_exports/segmento_categoria/category_<id>/
+app/batch_exports/catalogo_completo/all/
+app/batch_uploads/predictions/
+app/batch_uploads/history/uploaded_predictions_history.csv
+modelops/latest/
+modelops/registry/
 ```
 
-También se agregaron entrypoints específicos para SageMaker Processing:
+### Outputs operacionales en RDS
 
-```text
-scripts/sagemaker_entrypoints/build_features.py
-scripts/sagemaker_entrypoints/train_segmented.py
-scripts/sagemaker_entrypoints/score_batch.py
-```
-
-Estos entrypoints resuelven el problema de imports dentro del contenedor de SageMaker, porque agregan el root del proyecto al `sys.path` antes de importar `modelops`.
+- Historial de archivos generados.
+- Feedback del negocio.
+- Eventos de uso.
+- Metadata operacional del producto.
 
 ---
 
-### 3.3 Infraestructura agregada
-
-Se agregó:
+## Estructura del repositorio
 
 ```text
-infra/modelops-stack.yaml
-```
-
-Este stack crea:
-
-- bucket S3 para datos y outputs de ModelOps;
-- Glue Database;
-- Glue Crawler;
-- SageMaker Execution Role.
-
-También se preparó un overlay opcional de automatización:
-
-```text
-infra/modelops-automation-stack.yaml
-buildspec-modelops.yml
-scripts/prepare_new_model_run.py
-scripts/run_manual_retraining_cycle.sh
-scripts/create_holdout_incoming_batch.py
-scripts/append_incoming_batch_to_sales.py
-scripts/print_modelops_outputs.sh
-```
-
-Ese overlay sirve para automatizar futuras corridas manuales o programadas con CodeBuild + EventBridge.
-
----
-
-### 3.4 Documentación agregada
-
-Se agregó documentación de apoyo:
-
-```text
-docs/MODELOPS_FLOW.md
-docs/AUTOMATION_FLOW.md
-README_MODELING_BRANCH.md
-README_AUTOMATION.md
-```
-
-Este archivo actual, `README_MODELOPS_HANDOFF.md`, resume todo para integración con el dashboard.
-
----
-
-### 3.5 Dependencias
-
-Se agregaron o usaron dependencias para:
-
-```text
-sagemaker
-boto3
-s3fs
-awswrangler
-pyyaml
-pytest
-```
-
-Para SageMaker Processing se simplificó `requirements.txt` para evitar problemas de resolución de dependencias dentro del contenedor:
-
-```text
-pandas
-pyarrow
-scikit-learn
-joblib
-boto3
-typing
+.
+├── README.md
+├── Dockerfile
+├── pyproject.toml / uv.lock
+├── frontend/
+│   ├── app.py
+│   ├── batch_upload_inference.py
+│   ├── cfo_s3_exports.py
+│   └── low_activity_kpis.py
+├── backend/
+│   ├── modelops_s3.py
+│   └── storage.py
+├── src/
+│   ├── modelops_v2/
+│   ├── modelops_v3/
+│   └── modelops_hybrid/
+├── scripts/
+│   ├── 06_build_push_app.sh
+│   ├── 07_deploy_ecs.sh
+│   ├── 30_train_compare_models_local.sh
+│   ├── 31_upload_modelops_outputs_s3.py
+│   ├── 40_train_hybrid_router.py
+│   └── ...
+├── infra/
+│   └── cloudformation templates
+├── sql/
+├── tests/
+├── docs/
+│   └── Examen_ProductodeDatos_Avril_Hector.pdf
+├── graficasProyecto/
+│   ├── infraestructura_a1.png
+│   ├── ER1transpa.png
+│   └── capturas de la app/AWS
+└── data/examples/
+    └── batch_upload/
 ```
 
 ---
 
-## 4. Datos usados
+## Instalación local
 
-Los archivos CSV reales usados para el flujo fueron:
-
-```text
-data/raw/sales_train.csv
-data/raw/test.csv
-data/raw/items_en.csv
-data/raw/item_categories_en.csv
-data/raw/shops_en.csv
-data/raw/sample_submission.csv
-```
-
-Estos archivos **no deben subirse a GitHub**.
-
-El `.gitignore` debe excluir como mínimo:
-
-```gitignore
-data/raw/*.csv
-data/modelops/
-*.parquet
-*.joblib
-.env
-.venv/
-__pycache__/
-```
-
----
-
-## 5. Correcciones hechas durante la ejecución
-
-### 5.1 Problema de imports locales
-
-Al correr localmente, algunos scripts no encontraban el paquete `modelops`.
-
-Solución usada:
+### 1. Clonar el repositorio
 
 ```bash
-PYTHONPATH=. uv run python scripts/run_model_flow_local.py ...
+git clone <URL_DEL_REPO>
+cd Parcial_ProductoDeDatos_MVP
 ```
 
-Y para otros scripts:
+### 2. Instalar dependencias
 
 ```bash
-PYTHONPATH=. uv run python scripts/upload_model_inputs_to_s3.py ...
-PYTHONPATH=. uv run python scripts/run_model_flow_aws_jobs.py ...
+uv sync
 ```
 
----
+Si no tienes `uv`, instálalo primero siguiendo la documentación oficial de Astral.
 
-### 5.2 Problema de bucket default de SageMaker
+### 3. Configurar variables de entorno
 
-SageMaker intentó subir código al bucket default:
+Usa archivos `.example.env` como base. No subas archivos `.env` reales al repositorio.
+
+```bash
+cp config/modelops_v4_3.example.env config/local.env
+```
+
+Variables típicas:
 
 ```text
-sagemaker-us-east-1-494321812137
-```
-
-pero el rol no tenía permisos ahí.
-
-Solución aplicada en `scripts/run_model_flow_aws_jobs.py`:
-
-```python
-boto_session = boto3.Session(region_name=args.region)
-session = sagemaker.Session(
-    boto_session=boto_session,
-    default_bucket=args.bucket,
-)
-```
-
-Así SageMaker usa el bucket del stack de ModelOps.
-
----
-
-### 5.3 Problema de imports dentro de SageMaker Processing
-
-SageMaker ejecutaba directamente:
-
-```text
-modelops/feature_builder.py
-```
-
-Eso hacía que el contenedor no pudiera importar `modelops`.
-
-Solución aplicada:
-
-Se crearon wrappers en:
-
-```text
-scripts/sagemaker_entrypoints/
-```
-
-y se modificó `scripts/run_model_flow_aws_jobs.py` para ejecutar:
-
-```python
-code="scripts/sagemaker_entrypoints/build_features.py"
-code="scripts/sagemaker_entrypoints/train_segmented.py"
-code="scripts/sagemaker_entrypoints/score_batch.py"
+AWS_REGION=us-east-1
+MODEL_BUCKET=pfs-modelops-...
+USE_MODELOPS_S3=false
+MODELOPS_LOCAL_ROOT=modelops_outputs_hybrid
+DATA_DIR=data
+DISABLE_RDS_WRITES=true
 ```
 
 ---
 
-## 6. Recursos AWS creados para ModelOps
-
-### 6.1 Stack principal
-
-Stack:
-
-```text
-pfs-modelops
-```
-
-Recursos principales:
-
-- S3 bucket;
-- SageMaker Execution Role;
-- Glue Database;
-- Glue Crawler;
-- CloudWatch Logs de los jobs de SageMaker Processing.
-
----
-
-### 6.2 Bucket principal
-
-Bucket usado:
-
-```text
-pfs-modelops-494321812137-us-east-1
-```
-
-Variable recomendada:
+## Ejecución local
 
 ```bash
-export MODEL_BUCKET=pfs-modelops-494321812137-us-east-1
+export USE_MODELOPS_S3=false
+export MODELOPS_LOCAL_ROOT=modelops_outputs_hybrid
+export DATA_DIR=data
+export DISABLE_RDS_WRITES=true
+
+PYTHONPATH=. uv run streamlit run frontend/app.py
+```
+
+Validar sintaxis:
+
+```bash
+PYTHONPATH=. uv run python scripts/validate_app_syntax.py
 ```
 
 ---
 
-### 6.3 SageMaker role
+## Despliegue en AWS
 
-Para obtenerlo automáticamente:
-
-```bash
-export SAGEMAKER_ROLE_ARN=$(aws cloudformation describe-stacks \
-  --stack-name pfs-modelops \
-  --query "Stacks[0].Outputs[?OutputKey=='SageMakerExecutionRoleArn'].OutputValue" \
-  --output text)
-```
-
----
-
-### 6.4 Glue Crawler
-
-Crawler esperado:
-
-```text
-pfs-modelops-crawler
-```
-
-Para obtenerlo automáticamente:
+### 1. Construir y subir imagen a ECR
 
 ```bash
-export GLUE_CRAWLER_NAME=$(aws cloudformation describe-stacks \
-  --stack-name pfs-modelops \
-  --query "Stacks[0].Outputs[?OutputKey=='GlueCrawlerName'].OutputValue" \
-  --output text)
+source config/generated.env
+./scripts/06_build_push_app.sh
 ```
 
----
-
-### 6.5 Glue Database
-
-No asumir el nombre. Obtenerlo con:
+### 2. Desplegar ECS/Fargate + ALB
 
 ```bash
-export GLUE_DATABASE_NAME=$(aws cloudformation describe-stacks \
-  --stack-name pfs-modelops \
-  --query "Stacks[0].Outputs[?OutputKey=='GlueDatabaseName'].OutputValue" \
-  --output text)
+source config/generated.env
+./scripts/07_deploy_ecs.sh
 ```
 
-Si sale vacío, usar:
+### 3. Obtener URL pública
 
 ```bash
-export GLUE_DATABASE_NAME=$(aws glue get-crawler \
-  --name "$GLUE_CRAWLER_NAME" \
-  --query "Crawler.DatabaseName" \
-  --output text)
+./scripts/09_print_outputs.sh
 ```
 
-Verificar:
+### 4. Validar app
 
 ```bash
-echo $GLUE_DATABASE_NAME
+source config/generated.env
+./scripts/08_smoke_test_cloud.sh
 ```
 
----
-
-## 7. Comandos que ya se ejecutaron o deben poder repetirse
-
-### 7.1 Obtener outputs del stack
+### 5. Actualizar permisos S3 para predicciones cargadas
 
 ```bash
-export MODEL_BUCKET=$(aws cloudformation describe-stacks \
-  --stack-name pfs-modelops \
-  --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue" \
-  --output text)
-
-export SAGEMAKER_ROLE_ARN=$(aws cloudformation describe-stacks \
-  --stack-name pfs-modelops \
-  --query "Stacks[0].Outputs[?OutputKey=='SageMakerExecutionRoleArn'].OutputValue" \
-  --output text)
-
-export GLUE_CRAWLER_NAME=$(aws cloudformation describe-stacks \
-  --stack-name pfs-modelops \
-  --query "Stacks[0].Outputs[?OutputKey=='GlueCrawlerName'].OutputValue" \
-  --output text)
-
-export GLUE_DATABASE_NAME=$(aws glue get-crawler \
-  --name "$GLUE_CRAWLER_NAME" \
-  --query "Crawler.DatabaseName" \
-  --output text)
-```
-
----
-
-### 7.2 Subir inputs CSV a S3
-
-```bash
-PYTHONPATH=. uv run python scripts/upload_model_inputs_to_s3.py \
+PYTHONPATH=. uv run python scripts/97_grant_task_role_s3_batch_upload_permissions.py \
+  --role-name pfs-mvp-task-role \
   --bucket "$MODEL_BUCKET" \
-  --sales-path data/raw/sales_train.csv \
-  --test-path data/raw/test.csv \
-  --items-path data/raw/items_en.csv \
-  --categories-path data/raw/item_categories_en.csv \
-  --shops-path data/raw/shops_en.csv \
-  --sample-submission-path data/raw/sample_submission.csv
+  --region "$AWS_REGION"
 ```
 
-Esto deja los CSV en:
+---
+
+## Operación, estabilidad y seguridad
+
+Durante las pruebas se ajustó la app para renderizar una vista a la vez, reduciendo carga de navegación. También se aumentaron recursos de ECS Fargate y se ajustaron permisos S3 por prefijo.
+
+Buenas prácticas aplicadas:
+
+- No guardar credenciales en código.
+- AWS Secrets Manager para RDS.
+- Task role con permisos específicos sobre S3.
+- CloudWatch Logs para depuración.
+- Separación entre `app/batch_exports/` y `app/batch_uploads/`.
+- `.gitignore` para excluir `.env`, outputs locales, backups y artefactos pesados.
+
+---
+
+## Documentación metodológica
+
+El reporte metodológico completo debe guardarse en:
 
 ```text
-s3://$MODEL_BUCKET/raw/current/
+docs/Examen_ProductodeDatos_Avril_Hector.pdf
 ```
+
+Este PDF documenta contexto de negocio, arquitectura, modelo de datos, evaluación, tour de la aplicación, evidencias AWS, costos, operación, seguridad, cobertura de rúbrica, limitaciones y uso de herramientas de IA.
 
 ---
 
-### 7.3 Correr flujo completo en SageMaker Processing
+## Limitaciones y siguientes pasos
 
-```bash
-PYTHONPATH=. uv run python scripts/run_model_flow_aws_jobs.py \
-  --role-arn "$SAGEMAKER_ROLE_ARN" \
-  --bucket "$MODEL_BUCKET" \
-  --region us-east-1 \
-  --instance-type ml.m5.xlarge
-```
-
-El flujo corre tres jobs:
-
-```text
-1. Build features
-2. Train segmented models
-3. Score batch
-```
-
-Los jobs se observaron como `Completed`.
+- Agregar autenticación y autorización por rol.
+- Automatizar ModelOps con jobs programados o pipelines externos.
+- Monitorear drift y desempeño cuando llegue el valor real futuro.
+- Evaluar SageMaker Batch Transform si crece el volumen de scoring.
+- Enriquecer cold-start con catálogo de negocio, lanzamientos y atributos externos.
+- Agregar notificaciones cuando un archivo CFO o batch cargado quede listo.
 
 ---
 
-## 8. Rutas S3 para entregar al dashboard
+## Bibliografía y recursos consultados
 
-Bucket base:
+1. Rožanec, J. M., Petelin, G., Costa, J., Bertalanič, B., Cerar, G., Guček, M., Papa, G. y Mladenić, D. (2023). *Dealing with zero-inflated data: achieving SOTA with a two-fold machine learning approach*. arXiv:2310.08088. Disponible en: https://arxiv.org/pdf/2310.08088
 
-```text
-s3://pfs-modelops-494321812137-us-east-1
-```
+2. OpenAI. (2026). *ChatGPT, versión GPT-5.4*. Modelo de lenguaje utilizado como apoyo para estructurar el reporte, revisar redacción, documentar decisiones técnicas y depurar fragmentos de código. Disponible en: https://chat.openai.com/
 
-### 8.1 Rutas principales para Streamlit
+3. Amazon Web Services. (2026). *AWS Fargate Pricing*. Disponible en: https://aws.amazon.com/fargate/pricing/
 
-Estas son las rutas más importantes que debe usar el dashboard:
+4. Amazon Web Services. (2026). *Elastic Load Balancing Pricing*. Disponible en: https://aws.amazon.com/elasticloadbalancing/pricing/
 
-```text
-FORECAST_DETAIL=s3://pfs-modelops-494321812137-us-east-1/modelops/predictions/forecast_detail.parquet
-FORECAST_SUMMARY_CATEGORY=s3://pfs-modelops-494321812137-us-east-1/modelops/predictions/forecast_summary_by_category.parquet
-FORECAST_SUMMARY_SHOP_SEGMENT=s3://pfs-modelops-494321812137-us-east-1/modelops/predictions/forecast_summary_by_shop_segment.parquet
-SUBMISSION=s3://pfs-modelops-494321812137-us-east-1/modelops/predictions/submission.csv
+5. Amazon Web Services. (2026). *Amazon RDS for PostgreSQL Pricing*. Disponible en: https://aws.amazon.com/rds/postgresql/pricing/
 
-EVALUATION_DETAIL=s3://pfs-modelops-494321812137-us-east-1/modelops/evaluation/evaluation_detail.parquet
-EVALUATION_BY_SEGMENT=s3://pfs-modelops-494321812137-us-east-1/modelops/evaluation/evaluation_by_segment.parquet
-EVALUATION_BY_ITEM=s3://pfs-modelops-494321812137-us-east-1/modelops/evaluation/evaluation_by_item.parquet
-MODEL_METRICS=s3://pfs-modelops-494321812137-us-east-1/modelops/evaluation/model_metrics.json
-```
+6. Amazon Web Services. (2026). *Amazon S3 Pricing*. Disponible en: https://aws.amazon.com/s3/pricing/
+
+7. Amazon Web Services. (2026). *Amazon ECR Pricing*. Disponible en: https://aws.amazon.com/ecr/pricing/
+
+8. Amazon Web Services. (2026). *Amazon CloudWatch Pricing*. Disponible en: https://aws.amazon.com/cloudwatch/pricing/
+
+9. Amazon Web Services. (2026). *AWS Secrets Manager Pricing*. Disponible en: https://aws.amazon.com/secrets-manager/pricing/
+
+10. Amazon Web Services. (2026). *AWS Glue Pricing*. Disponible en: https://aws.amazon.com/glue/pricing/
 
 ---
 
-### 8.2 Rutas de features, modelo y metadata
+## Autores
 
-Estas rutas no son necesariamente para el dashboard, pero sirven para auditoría y debugging:
+- Avril Salazar Rodríguez
+- Héctor Vilchis Peralta
 
-```text
-FEATURES_TRAIN=s3://pfs-modelops-494321812137-us-east-1/modelops/features/train.parquet
-FEATURES_VALID=s3://pfs-modelops-494321812137-us-east-1/modelops/features/valid.parquet
-INFERENCE_FEATURES=s3://pfs-modelops-494321812137-us-east-1/modelops/features/inference_features.parquet
-INFERENCE_PAIRS=s3://pfs-modelops-494321812137-us-east-1/modelops/features/inference_pairs.parquet
-PRODUCT_SEGMENTS=s3://pfs-modelops-494321812137-us-east-1/modelops/features/product_segments.parquet
-SHOP_DIMENSION=s3://pfs-modelops-494321812137-us-east-1/modelops/features/shop_dimension.parquet
-
-MODEL_BUNDLE=s3://pfs-modelops-494321812137-us-east-1/modelops/model/model_bundle.joblib
-```
-
----
-
-### 8.3 Comando para imprimir rutas con variables
-
-```bash
-cat <<EOT
-Ya terminó el flujo ModelOps en SageMaker Processing.
-
-Glue Database:
-$GLUE_DATABASE_NAME
-
-Forecast:
-s3://$MODEL_BUCKET/modelops/predictions/forecast_detail.parquet
-s3://$MODEL_BUCKET/modelops/predictions/forecast_summary_by_category.parquet
-s3://$MODEL_BUCKET/modelops/predictions/forecast_summary_by_shop_segment.parquet
-
-Evaluación:
-s3://$MODEL_BUCKET/modelops/evaluation/evaluation_by_segment.parquet
-s3://$MODEL_BUCKET/modelops/evaluation/evaluation_by_item.parquet
-s3://$MODEL_BUCKET/modelops/evaluation/model_metrics.json
-
-Submission:
-s3://$MODEL_BUCKET/modelops/predictions/submission.csv
-EOT
-```
-
----
-
-## 9. Rutas recomendadas si se activa automatización con `latest/`
-
-Si se copia el overlay de automatización y se usa `run_manual_retraining_cycle.sh`, el dashboard debería leer rutas estables bajo `modelops/latest/`:
-
-```text
-LATEST_FORECAST_DETAIL=s3://pfs-modelops-494321812137-us-east-1/modelops/latest/predictions/forecast_detail.parquet
-LATEST_FORECAST_SUMMARY_CATEGORY=s3://pfs-modelops-494321812137-us-east-1/modelops/latest/predictions/forecast_summary_by_category.parquet
-LATEST_FORECAST_SUMMARY_SHOP_SEGMENT=s3://pfs-modelops-494321812137-us-east-1/modelops/latest/predictions/forecast_summary_by_shop_segment.parquet
-LATEST_SUBMISSION=s3://pfs-modelops-494321812137-us-east-1/modelops/latest/predictions/submission.csv
-
-LATEST_EVALUATION_BY_SEGMENT=s3://pfs-modelops-494321812137-us-east-1/modelops/latest/evaluation/evaluation_by_segment.parquet
-LATEST_EVALUATION_BY_ITEM=s3://pfs-modelops-494321812137-us-east-1/modelops/latest/evaluation/evaluation_by_item.parquet
-LATEST_MODEL_METRICS=s3://pfs-modelops-494321812137-us-east-1/modelops/latest/evaluation/model_metrics.json
-```
-
-Estas rutas son mejores para la app porque no cambian entre corridas.
-
----
-
-## 10. Cómo puede leer el dashboard estos archivos
-
-### Opción rápida: leer directo desde S3 con pandas
-
-```python
-import pandas as pd
-
-forecast_detail = pd.read_parquet(
-    "s3://pfs-modelops-494321812137-us-east-1/modelops/predictions/forecast_detail.parquet"
-)
-
-evaluation_by_segment = pd.read_parquet(
-    "s3://pfs-modelops-494321812137-us-east-1/modelops/evaluation/evaluation_by_segment.parquet"
-)
-```
-
-Para que esto funcione dentro de ECS/Fargate, el Task Role de la app debe tener permisos:
-
-```text
-s3:GetObject
-s3:ListBucket
-```
-
-sobre el bucket:
-
-```text
-pfs-modelops-494321812137-us-east-1
-```
-
----
-
-### Opción alternativa: descargar a local para pruebas
-
-```bash
-aws s3 cp s3://pfs-modelops-494321812137-us-east-1/modelops/predictions/forecast_detail.parquet data/app/forecast_detail.parquet
-aws s3 cp s3://pfs-modelops-494321812137-us-east-1/modelops/evaluation/model_metrics.json data/app/model_metrics.json
-```
-
----
-
-## 11. Validaciones pendientes
-
-### 11.1 Validar outputs en S3
-
-```bash
-aws s3 ls s3://$MODEL_BUCKET/modelops/features/ --recursive
-aws s3 ls s3://$MODEL_BUCKET/modelops/model/ --recursive
-aws s3 ls s3://$MODEL_BUCKET/modelops/evaluation/ --recursive
-aws s3 ls s3://$MODEL_BUCKET/modelops/predictions/ --recursive
-```
-
----
-
-### 11.2 Descargar métricas
-
-```bash
-aws s3 cp s3://$MODEL_BUCKET/modelops/evaluation/model_metrics.json .
-cat model_metrics.json
-```
-
-Revisar:
-
-```text
-rmse_naive
-rmse_global
-rmse_final
-n_segment_models
-```
-
----
-
-### 11.3 Correr Glue Crawler
-
-```bash
-aws glue start-crawler --name "$GLUE_CRAWLER_NAME"
-```
-
-Ver estado:
-
-```bash
-aws glue get-crawler \
-  --name "$GLUE_CRAWLER_NAME" \
-  --query "Crawler.State"
-```
-
-Listar tablas:
-
-```bash
-aws glue get-tables \
-  --database-name "$GLUE_DATABASE_NAME" \
-  --query "TableList[].Name"
-```
-
----
-
-## 12. Documentación en el reporte
-
-
-
-> Se implementó un flujo de ModelOps en AWS usando SageMaker Processing para ejecutar feature engineering, entrenamiento segmentado, evaluación contra baseline naive y batch scoring. El entrenamiento se realiza fuera de Streamlit para no degradar la experiencia de usuario. Los outputs se guardan en S3 y se catalogan con Glue Data Catalog para que el dashboard consuma pronósticos y métricas como tablas precomputadas.
-
-segmentación:
-
-> El dataset corresponde a ventas retail por tienda-producto, no a subsegmentos de población. Por ello, la segmentación del modelo se hace por categorías de producto usando `items_en.csv` e `item_categories_en.csv`. El flujo entrena un modelo global y modelos segmentados por categoría cuando existe suficiente volumen de entrenamiento y validación. Cada modelo segmentado se conserva únicamente si mejora contra el modelo global o contra un baseline naive.
-
-automatización:
-
-> Para automatizar el reentrenamiento, el sistema puede recibir nuevos CSV en `raw/current/` o `raw/runs/<run_id>/`, ejecutar los tres jobs de SageMaker Processing, publicar los outputs en `modelops/runs/<run_id>/` y sincronizar los resultados vigentes a `modelops/latest/`. Esta ruta puede ejecutarse manualmente o programarse con CodeBuild + EventBridge.
-
----
-
-## 13. Evidencias que faltan o que deben guardarse
-
-Tomar screenshots de:
-
-```text
-1. CloudFormation stack pfs-modelops en CREATE_COMPLETE
-2. SageMaker Processing jobs en Completed
-3. S3 raw/current/
-4. S3 modelops/features/
-5. S3 modelops/evaluation/
-6. S3 modelops/predictions/
-7. model_metrics.json abierto
-8. Glue Crawler ejecutado
-9. Glue tables creadas
-10. CloudWatch logs de un job
-```
-
----
-
-## 14. Próximos pasos técnicos
-
-### Paso 1: Pasar rutas al dashboard
-
-Entregar a la compañera las rutas de la sección 8.
-
-### Paso 2: Dar permisos al Task Role de ECS
-
-La app de Streamlit en ECS debe poder leer:
-
-```text
-s3://pfs-modelops-494321812137-us-east-1/modelops/predictions/
-s3://pfs-modelops-494321812137-us-east-1/modelops/evaluation/
-```
-
-Permisos mínimos:
-
-```text
-s3:GetObject
-s3:ListBucket
-```
-
-### Paso 3: Conectar Streamlit a outputs
-
-En el dashboard, crear funciones como:
-
-```python
-@st.cache_data(ttl=600)
-def load_forecast_detail():
-    return pd.read_parquet(FORECAST_DETAIL_S3_URI)
-```
-
-### Paso 4: Actualizar README y reporte
-
-Agregar:
-
-- flujo de modelos;
-- rutas S3;
-- métricas;
-- justificación de precomputar outputs;
-- screenshots AWS.
-
-### Paso 5: Automatización opcional
-
-Copiar el overlay de automatización:
-
-```text
-scripts/prepare_new_model_run.py
-scripts/run_manual_retraining_cycle.sh
-buildspec-modelops.yml
-infra/modelops-automation-stack.yaml
-```
-
-Probar primero ejecución manual:
-
-```bash
-PYTHONPATH=. ./scripts/run_manual_retraining_cycle.sh
-```
-
-Luego, si se quiere programar:
-
-```bash
-aws cloudformation deploy \
-  --template-file infra/modelops-automation-stack.yaml \
-  --stack-name pfs-modelops-automation \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --parameter-overrides \
-    ModelBucket="$MODEL_BUCKET" \
-    SageMakerRoleArn="$SAGEMAKER_ROLE_ARN" \
-    GlueCrawlerName="$GLUE_CRAWLER_NAME" \
-    InstanceType=ml.m5.xlarge \
-    ScheduleExpression="rate(7 days)"
-```
-
----
-
-## 15. Qué servicios AWS quedan cubiertos por la parte de modelos
-
-| Servicio | Uso en esta parte |
-|---|---|
-| Amazon S3 | Datos crudos, features, modelos, evaluación, predicciones. |
-| SageMaker Processing | Feature engineering, entrenamiento, evaluación y scoring batch. |
-| AWS Glue Data Catalog | Catálogo de outputs analíticos. |
-| AWS CloudFormation | Stack `pfs-modelops`. |
-| IAM Role | Rol de ejecución para SageMaker. |
-| CloudWatch Logs | Logs de Processing Jobs. |
-
-Servicios que se cubren principalmente en la parte del dashboard:
-
-| Servicio | Uso esperado |
-|---|---|
-| Amazon ECR | Imagen Docker de Streamlit. |
-| ECS Fargate | Hosting de Streamlit. |
-| RDS | Feedback, export jobs, model metadata si deciden guardarla. |
-| Secrets Manager | Credenciales de RDS. |
-
-EC2 no es necesario para este MVP.
-
----
-
-## 16. Estado actual resumido
-
-Estado de la parte de modelos:
-
-```text
-SageMaker Processing jobs: Completed
-CSV reales subidos a S3: sí
-Outputs de modelos generados: sí, validar rutas S3
-Glue Crawler: pendiente si no se ha corrido
-Rutas para dashboard: disponibles
-Automatización programada: preparada como siguiente paso
-```
-
----
-
-## 17. Checklist final de tu parte
-
-```text
-[ ] Confirmar outputs en S3.
-[ ] Descargar y revisar model_metrics.json.
-[ ] Correr Glue Crawler.
-[ ] Confirmar Glue tables.
-[ ] Pasar rutas S3 a la compañera.
-[ ] Agregar README_MODELOPS_HANDOFF.md al repo.
-[ ] Tomar screenshots de evidencia.
-[ ] Documentar flujo en reporte.
-[ ] Hacer commit y push.
-[ ] Abrir PR hacia develop.
-```
-
----
-
-## 18. Commit sugerido
-
-```bash
-git status
-
-git add modelops/
-git add scripts/
-git add infra/modelops-stack.yaml
-git add docs/
-git add tests/
-git add README_MODELING_BRANCH.md
-git add README_MODELOPS_HANDOFF.md
-git add requirements.txt
-git add pyproject.toml uv.lock
-
-git commit -m "Add ModelOps handoff and segmented retraining flow"
-git push
-```
-
----
-
-## 19. Mensaje corto para la compañera
-
-```text
-Ya terminó el flujo de modelos en SageMaker Processing.
-
-Los outputs principales para conectar al dashboard son:
-
-Forecast:
-s3://pfs-modelops-494321812137-us-east-1/modelops/predictions/forecast_detail.parquet
-s3://pfs-modelops-494321812137-us-east-1/modelops/predictions/forecast_summary_by_category.parquet
-s3://pfs-modelops-494321812137-us-east-1/modelops/predictions/forecast_summary_by_shop_segment.parquet
-
-Evaluación:
-s3://pfs-modelops-494321812137-us-east-1/modelops/evaluation/evaluation_by_segment.parquet
-s3://pfs-modelops-494321812137-us-east-1/modelops/evaluation/evaluation_by_item.parquet
-s3://pfs-modelops-494321812137-us-east-1/modelops/evaluation/model_metrics.json
-
-Submission:
-s3://pfs-modelops-494321812137-us-east-1/modelops/predictions/submission.csv
-
-Falta que el dashboard lea estas rutas desde S3 y que el Task Role de ECS tenga permisos s3:GetObject/ListBucket sobre el bucket.
-```
+Curso: **Arquitectura de Productos de Datos y Métodos de Gran Escala**  
+Institución: **ITAM**  
+Fecha: **Mayo 2026**
