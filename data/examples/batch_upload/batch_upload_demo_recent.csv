@@ -1,0 +1,5 @@
+shop_id,item_id,item_category_id,cnt_lag_1,cnt_lag_2,cnt_lag_3,cnt_lag_4,cnt_lag_5,cnt_lag_6,recency
+31,10201,28,2,1,0,0,0,0,1
+42,10202,20,1,1,1,0,0,0,1
+25,1583,20,3,0,2,0,1,0,1
+19,7223,20,1,0,0,0,0,0,1

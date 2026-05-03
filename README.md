@@ -1,183 +1,248 @@
-# Producto de datos para pronóstico de ventas en AWS
+# Producto de Datos — Pronóstico de Ventas 1C Company en AWS
 
-> MVP de producto de datos para consultar pronósticos mensuales de ventas de **1C Company**, generar archivos para CFO, evaluar modelos, revisar KPIs, capturar feedback operativo y consumir artefactos ModelOps publicados en AWS.
+> MVP de producto de datos para consultar pronósticos mensuales de ventas, generar archivos para negocio/CFO, evaluar modelos, registrar feedback operativo y mantener trazabilidad de ModelOps en AWS.
 
-![Vista pública de la aplicación](graficasProyecto/apppublica.png)
+<p align="center">
+  <img src="graficasProyecto/apppublica.png" alt="Aplicación Streamlit pública" width="850">
+</p>
 
 ---
 
 ## Tabla de contenidos
 
-1. [Descripción general](#descripción-general)
-2. [Problema de negocio](#problema-de-negocio)
-3. [Arquitectura](#arquitectura)
-4. [Funcionalidades principales](#funcionalidades-principales)
-5. [Estrategia de modelado y ModelOps](#estrategia-de-modelado-y-modelops)
-6. [Inputs y outputs](#inputs-y-outputs)
-7. [Estructura del repositorio](#estructura-del-repositorio)
-8. [Instalación local](#instalación-local)
-9. [Ejecución local](#ejecución-local)
-10. [Despliegue en AWS](#despliegue-en-aws)
-11. [Operación y validación](#operación-y-validación)
-12. [Seguridad y buenas prácticas](#seguridad-y-buenas-prácticas)
-13. [Troubleshooting](#troubleshooting)
-14. [Licencia](#licencia)
+1. [Contexto de negocio](#contexto-de-negocio)
+2. [Qué hace el producto](#qué-hace-el-producto)
+3. [Arquitectura general](#arquitectura-general)
+4. [Modelo de datos y entidad-relación](#modelo-de-datos-y-entidad-relación)
+5. [Tecnologías utilizadas](#tecnologías-utilizadas)
+6. [Vistas de la aplicación](#vistas-de-la-aplicación)
+7. [ModelOps y política híbrida](#modelops-y-política-híbrida)
+8. [Inputs y outputs](#inputs-y-outputs)
+9. [Estructura del repositorio](#estructura-del-repositorio)
+10. [Instalación local](#instalación-local)
+11. [Ejecución local](#ejecución-local)
+12. [Despliegue en AWS](#despliegue-en-aws)
+13. [Operación, estabilidad y seguridad](#operación-estabilidad-y-seguridad)
+14. [Documentación del reporte](#documentación-del-reporte)
+15. [Limitaciones y siguientes pasos](#limitaciones-y-siguientes-pasos)
+16. [Autores](#autores)
 
 ---
 
-## Descripción general
+## Contexto de negocio
 
-Este proyecto transforma un flujo de machine learning originalmente trabajado en notebooks en una aplicación web de datos lista para ser usada por perfiles de negocio y equipos técnicos. La aplicación permite consultar pronósticos mensuales por tienda-producto, generar archivos batch para finanzas, evaluar modelos, revisar productos problemáticos y registrar observaciones operativas.
+El proyecto parte del problema de pronosticar ventas mensuales de 1C Company a nivel **tienda-producto**. El objetivo no es ganar la competencia original de Kaggle, sino convertir un flujo de machine learning en un **producto de datos operable** por usuarios de negocio.
 
-La solución final se implementa con **Streamlit**, se despliega como contenedor en **Amazon ECS Fargate**, guarda artefactos y salidas en **Amazon S3**, registra información operacional en **Amazon RDS PostgreSQL**, y usa un flujo **ModelOps** para separar el entrenamiento y evaluación del consumo interactivo.
+El MVP responde a necesidades de varios stakeholders:
 
----
-
-## Problema de negocio
-
-1C Company necesita consultar y operar pronósticos de ventas mensuales de forma accionable. El reto no es solo producir una predicción, sino convertirla en un producto de datos que pueda ser usado por diferentes stakeholders:
-
-| Stakeholder | Necesidad | Solución en la app |
+| Stakeholder | Necesidad | Respuesta del MVP |
 |---|---|---|
-| CFO / Finanzas | Generar archivos descargables para tienda, categoría o catálogo completo | Vista **Batch CFO** con guardado en S3 |
-| Planeación de inventarios | Identificar productos sobre/subestimados o de baja actividad | Vistas **KPIs** y **Feedback** |
-| Data Science | Evaluar modelos y comparar contra naive | Vista **Evaluación** y **Model Registry** |
-| Plataforma / DevOps | Ejecutar la app sin depender de una laptop | Despliegue en ECS Fargate + ALB |
-| BI / Analítica | Consultar artefactos persistentes | S3 + Glue Catalog + salidas ModelOps |
+| Planeación de demanda | Consultar pronósticos por tienda, producto o categoría. | App Streamlit pública con filtros, KPIs y vistas de evaluación. |
+| Finanzas / CFO | Descargar archivos batch de forecast. | Vista **Batch CFO** con descarga CSV, guardado en S3 e historial. |
+| Applied Scientist | Comparar modelos y revisar errores. | Model Registry, curvas de evaluación, RMSE/MAE y comparación contra naive. |
+| Operaciones / Inventarios | Detectar productos con baja actividad o riesgo de sub/sobreestimación. | KPIs, Feedback y tablas de productos problemáticos. |
+| Plataforma / CTO | Ejecutar una app estable y reproducible en nube. | Docker, ECR, ECS Fargate, ALB, CloudFormation, RDS, S3 y CloudWatch. |
+| Seguridad | No guardar credenciales en código. | Secrets Manager, variables de entorno y roles IAM con permisos por prefijo. |
 
 ---
 
-## Arquitectura
+## Qué hace el producto
 
-La arquitectura separa tres responsabilidades:
+La aplicación permite:
 
-1. **Capa de consumo:** Streamlit como interfaz para negocio y operación.
-2. **Capa de persistencia:** S3 para artefactos/salidas y RDS para historial/feedback.
-3. **Capa ModelOps:** entrenamiento, evaluación, registry y publicación de predicciones.
-
-![Diagrama de arquitectura](graficasProyecto/infraestructura_a1.png)
-
-### Componentes principales
-
-| Componente | Uso |
-|---|---|
-| Application Load Balancer | Expone la aplicación desde una URL pública |
-| ECS Fargate | Ejecuta el contenedor de Streamlit |
-| ECR | Almacena la imagen Docker |
-| S3 | Guarda ModelOps, predicciones, archivos CFO y batch uploads |
-| RDS PostgreSQL | Guarda historial, feedback y eventos operativos |
-| Secrets Manager | Administra credenciales de RDS |
-| CloudWatch Logs | Permite depurar tareas ECS y errores de la app |
-| Glue Data Catalog | Capa de metadatos para consumo analítico sobre S3 |
+- Consultar forecast mensual por tienda y producto.
+- Generar archivos CFO para:
+  - todos los productos de una tienda;
+  - una categoría/segmento específico;
+  - el catálogo completo.
+- Guardar archivos CFO en S3 con estructura clara por alcance.
+- Subir un CSV estilo test o con features completas para generar inferencia batch ad hoc.
+- Guardar predicciones cargadas en S3 bajo una carpeta separada de los archivos CFO.
+- Evaluar modelos contra ground truth histórico.
+- Comparar modelos contra naive, promedio móvil, LightGBM original, Hurdle HGB, Poisson y router híbrido.
+- Registrar feedback de negocio para revisión posterior.
+- Consultar un Model Registry ligero con métricas, descripciones y modelo champion.
 
 ---
 
-## Funcionalidades principales
+## Arquitectura general
 
-### 1. Resumen ejecutivo
+La arquitectura separa tres capas:
 
-Muestra volumen de predicciones, modelo en uso, distribución de pronósticos, principales tiendas/categorías y cobertura por `model_scope`.
+1. **Capa de consumo**: app Streamlit desplegada en ECS Fargate y expuesta mediante Application Load Balancer.
+2. **Capa de persistencia**: S3 para archivos y artefactos; RDS PostgreSQL para historial, eventos y feedback.
+3. **Capa de ModelOps**: artefactos, predicciones, métricas, curvas de evaluación, model registry y modelo champion.
 
-![Resumen ejecutivo](graficasProyecto/apppublica.png)
+<p align="center">
+  <img src="graficasProyecto/infraestructura_a1.png" alt="Arquitectura AWS del MVP" width="900">
+</p>
+
+**Lectura del diagrama.** El usuario entra por el ALB hacia la app en ECS Fargate. La app consume artefactos vigentes desde S3, registra información operacional en RDS, obtiene secretos desde Secrets Manager y deja trazabilidad en CloudWatch Logs. Glue Data Catalog funciona como capa de metadatos sobre los archivos analíticos en S3.
+
+---
+
+## Modelo de datos y entidad-relación
+
+El modelo de datos principal vive en S3 y Glue Data Catalog. RDS se usa como base operacional, no como data lake completo.
+
+<p align="center">
+  <img src="graficasProyecto/diagrama_entidad_relacion.png" alt="Diagrama entidad-relación del producto de datos" width="900">
+</p>
+
+**Lectura del diagrama.** La tabla `features` alimenta el scoring. De ahí se construye `forecast_detail`, que guarda la predicción final y su trazabilidad. Cuando existe valor real, `evaluation_detail` permite calcular errores. A partir de esa evaluación se generan vistas agregadas por producto, categoría y modelo.
+
+Tablas/artefactos principales:
+
+| Artefacto | Propósito | Uso en la app |
+|---|---|---|
+| `features` | Variables explicativas: lags, medias móviles, recencia, frecuencia, precio y señales acumuladas. | Inferencia individual, batch cargado y scoring. |
+| `forecast_detail` | Predicción final por tienda-producto con `model_scope`, `routing_reason` y candidatos. | Resumen, Batch CFO, KPIs. |
+| `evaluation_detail` | Comparación fila a fila contra `y` real. | Evaluación, Feedback, análisis de errores. |
+| `evaluation_by_item` | Métricas por producto. | Evaluación y KPIs. |
+| `evaluation_by_segment` | Métricas por categoría/segmento. | KPIs y lectura por grupo. |
+| `model_runs.csv` | Corridas evaluadas y métricas. | Model Registry. |
+| `champion.json` | Modelo vigente y política de selección. | Resumen y Model Registry. |
+| `review_suggestions.parquet` | Productos sugeridos para revisión. | Feedback. |
+
+---
+
+## Tecnologías utilizadas
+
+| Capa | Tecnología | Uso |
+|---|---|---|
+| UI | Streamlit | Aplicación web de consulta, forecast, evaluación, KPIs y feedback. |
+| Contenedores | Docker | Empaquetado de la aplicación. |
+| Registry | Amazon ECR | Almacenamiento de la imagen Docker. |
+| Cómputo app | Amazon ECS Fargate | Ejecución serverless del contenedor. |
+| Exposición pública | Application Load Balancer | URL pública y balanceo hacia ECS. |
+| Persistencia analítica | Amazon S3 | ModelOps, predicciones, CFO exports, batch uploads, métricas. |
+| Base operacional | Amazon RDS PostgreSQL | Feedback, historial, eventos, metadata operacional. |
+| Credenciales | AWS Secrets Manager | Secreto de conexión a RDS. |
+| Logs | Amazon CloudWatch Logs | Depuración, reinicios, permisos y errores. |
+| Catálogo | AWS Glue Data Catalog | Metadatos de tablas analíticas sobre S3. |
+| Infraestructura | AWS CloudFormation | Despliegue reproducible de recursos. |
+| Python env | uv | Administración rápida de dependencias y ejecución. |
+| ML | scikit-learn / HGB / LightGBM | Modelos candidatos, baselines y política híbrida. |
+| Data | pandas / pyarrow | Manipulación y lectura/escritura de CSV/Parquet. |
+| AWS SDK | boto3 | Escritura/lectura en S3 y operación AWS desde Python. |
+
+### Evidencias visuales de tecnología
+
+<p align="center">
+  <img src="graficasProyecto/ecr.png" alt="Repositorio ECR" width="800">
+</p>
+
+<p align="center">
+  <img src="graficasProyecto/ecs.png" alt="Servicio ECS Fargate" width="800">
+</p>
+
+<p align="center">
+  <img src="graficasProyecto/s3.png" alt="Bucket S3 con outputs" width="800">
+</p>
+
+<p align="center">
+  <img src="graficasProyecto/rds.png" alt="RDS PostgreSQL" width="800">
+</p>
+
+<p align="center">
+  <img src="graficasProyecto/glue.png" alt="Glue Data Catalog" width="800">
+</p>
+
+<p align="center">
+  <img src="graficasProyecto/cloudwatch.png" alt="CloudWatch Logs" width="800">
+</p>
+
+> Si los nombres reales de tus capturas son distintos, conserva las imágenes en `graficasProyecto/` y ajusta únicamente el nombre del archivo en el README.
+
+---
+
+## Vistas de la aplicación
+
+### 1. Resumen
+
+Muestra volumen de predicciones, modelo vigente, métricas principales, forecast disponible, distribución de predicciones, categorías con mayor pronóstico y cobertura por `model_scope`.
+
+<p align="center">
+  <img src="graficasProyecto/resumen.png" alt="Vista Resumen" width="850">
+</p>
 
 ### 2. Inferencia individual
 
-Permite consultar un par tienda-producto usando ID o nombre. La app muestra la predicción y contexto relevante del producto.
+Permite seleccionar o escribir `shop_id` e `item_id`, consultar la predicción puntual y revisar el contexto del par tienda-producto.
 
-![Inferencia individual](graficasProyecto/inferenciaindividual.png)
+<p align="center">
+  <img src="graficasProyecto/inferenciaindividual.png" alt="Inferencia individual" width="850">
+</p>
 
 ### 3. Batch CFO
 
-Permite generar archivos para:
+Genera archivos para negocio por tienda, categoría o catálogo completo. Los archivos CFO se guardan bajo `app/batch_exports/` y se particionan por tienda o categoría.
 
-- todos los productos de una tienda;
-- un segmento/categoría;
-- catálogo completo.
-
-Los archivos CFO se guardan en S3 con particiones por alcance:
-
-```text
-app/batch_exports/todos_los_productos_de_una_tienda/shop_<id>/
-app/batch_exports/segmento_categoria/category_<id>/
-app/batch_exports/catalogo_completo/all/
-```
-
-![Batch CFO](graficasProyecto/batchcfo.png)
-
-![Batch CFO con historial](graficasProyecto/batchcfo2.png)
+<p align="center">
+  <img src="graficasProyecto/batchcfo.png" alt="Batch CFO" width="850">
+</p>
 
 ### 4. Batch por archivo cargado
 
-Permite subir un CSV estilo test/validación con columnas como:
+Permite subir un CSV con features completas o estilo test (`ID`, `shop_id`, `item_id`). Si el par existe en las features preparadas, la app completa columnas; si no existe, lo trata como cold-start. Estas predicciones ad hoc se guardan en `app/batch_uploads/predictions/`.
 
-```text
-ID, shop_id, item_id
-```
-
-o un archivo con features completas. Si los pares existen en las features preparadas, la app completa variables desde `data/prep/test_features.parquet`. Si no existen, se tratan como casos cold-start.
-
-Las predicciones por archivo cargado se guardan sin particionar en:
-
-```text
-app/batch_uploads/predictions/
-app/batch_uploads/history/uploaded_predictions_history.csv
-```
-
-![Batch por archivo cargado](graficasProyecto/batchcfo3.png)
-
-![Historial de batch uploads](graficasProyecto/batch4.png)
+<p align="center">
+  <img src="graficasProyecto/batchcfo_archivo_cargado.png" alt="Batch por archivo cargado" width="850">
+</p>
 
 ### 5. Evaluación
 
-Compara modelos contra ground truth. Incluye curva real vs modelos seleccionados, distribución por rangos de demanda real y tablas de performance.
+Compara modelos contra ground truth usando RMSE, MAE, curvas por rango de demanda real y tablas de performance por segmento/producto.
 
-![Evaluación](graficasProyecto/evaluacionseccion.png)
-
-![Curvas por modelo](graficasProyecto/evaluacion1_1.png)
-
-![Distribución de demanda real](graficasProyecto/distribuciondemanda.png)
+<p align="center">
+  <img src="graficasProyecto/evaluacionseccion.png" alt="Evaluación" width="850">
+</p>
 
 ### 6. KPIs
 
-Incluye RMSE por categoría, producto y tienda; además muestra productos con baja actividad reciente.
+Muestra categorías, productos y tiendas con mayor RMSE. También incluye productos con baja actividad reciente, top tiendas con más productos de baja actividad y top categorías afectadas.
 
-![KPIs por RMSE](graficasProyecto/kpis1.png)
-
-![KPIs y baja actividad](graficasProyecto/kpis2.png)
+<p align="center">
+  <img src="graficasProyecto/kpis2.png" alt="KPIs" width="850">
+</p>
 
 ### 7. Feedback
 
-Permite capturar observaciones de negocio y revisar productos sobreestimados, subestimados o sugeridos para revisión.
+Permite registrar observaciones de negocio y revisar productos sobreestimados, subestimados o sugeridos para revisión.
 
-![Feedback](graficasProyecto/feedback1.png)
-
-![Productos sugeridos para revisión](graficasProyecto/feedback3.png)
+<p align="center">
+  <img src="graficasProyecto/feedback1.png" alt="Feedback" width="850">
+</p>
 
 ### 8. Model Registry
 
-Muestra el modelo champion, métricas globales, historial de modelos, baselines y descripciones.
+Muestra el modelo champion, métricas y corridas evaluadas. Conserva el LightGBM original como incumbent, Hurdle HGB, HGB Poisson, especialista recurrente, rolling mean, promedio histórico y naive.
 
-![Model Registry](graficasProyecto/modelregistry.png)
+<p align="center">
+  <img src="graficasProyecto/modelregistry.png" alt="Model Registry" width="850">
+</p>
 
 ---
 
-## Estrategia de modelado y ModelOps
+## ModelOps y política híbrida
 
-El proyecto conserva modelos y baselines porque el problema tiene demanda intermitente y muchos ceros. La evaluación mostró que un modelo global puede funcionar bien para demanda baja, mientras que un naive o especialista puede ser competitivo en rangos con señal reciente.
+La demanda tiene muchos ceros y distintos regímenes. Por eso el MVP no usa un único modelo para todos los casos. Se conserva un Model Registry con modelos y baselines, y se usa una política híbrida que registra su decisión por fila.
 
-Modelos/candidatos principales:
-
-| Modelo | Descripción |
+| Ruta | Interpretación |
 |---|---|
-| Hurdle HGB | Modelo de dos etapas para probabilidad de venta y unidades |
-| LightGBM original dos etapas | Modelo incumbent con transformaciones originales |
-| Naive lag 1 | Baseline que usa la venta del último periodo |
-| Rolling mean | Baseline de media móvil reciente |
-| HGB Poisson | Modelo para conteos no negativos |
-| Especialista recurrente | Modelo para productos con señales de demanda recurrente |
-| Hybrid Router | Política que enruta cada producto-tienda a regla/modelo según señales históricas |
+| `inactive:no_recent_sales` | Producto-tienda con baja o nula actividad reciente. Predicción conservadora. |
+| `baseline:naive_recent_demand` | Existe venta reciente; la señal del último periodo puede ser informativa. |
+| `specialist:recurrent_demand` | Señales históricas sugieren demanda recurrente. |
+| `challenger:hurdle_hgb` | Caso de demanda baja/intermitente donde se usa Hurdle HGB. |
 
-La app consume artefactos publicados en S3 bajo `modelops/latest/`, evitando recalcular entrenamiento o scoring pesado dentro de Streamlit.
+Columnas de trazabilidad:
+
+| Columna | Significado |
+|---|---|
+| `model_id` | Modelo o familia de modelo registrada. |
+| `model_scope` | Ruta o política que generó la predicción final. |
+| `routing_reason` | Regla histórica que activó esa ruta. |
+| `decision_recommendation` | Explicación amigable para negocio. |
 
 ---
 
@@ -185,26 +250,30 @@ La app consume artefactos publicados en S3 bajo `modelops/latest/`, evitando rec
 
 ### Inputs principales
 
-| Input | Descripción |
-|---|---|
-| Datos históricos de ventas | Base para features, entrenamiento y validación |
-| `data/prep/test_features.parquet` | Features preparadas para inferencia batch |
-| `data/prep/test_pairs.parquet` | Pares tienda-producto de referencia |
-| CSV cargado por usuario | Archivo para inferencia ad hoc |
-| Artefactos ModelOps en S3 | Predicciones, métricas, curvas, registry y sugerencias |
+- Datos históricos de ventas de 1C Company.
+- Features preparadas en `data/prep/` o en artefactos publicados en S3.
+- Modelo serializado en `artifacts/model.joblib` cuando se ejecuta inferencia local dentro del contenedor.
+- Artefactos ModelOps publicados en S3.
+- CSV cargado por usuario en Batch CFO.
 
-### Outputs principales
+### Outputs principales en S3
 
-| Output | Ruta / uso |
-|---|---|
-| Forecast vigente | `modelops/latest/predictions/forecast_detail.parquet` |
-| Métricas de modelos | `modelops/latest/evaluation/model_metrics.json` |
-| Curvas de evaluación | `modelops/latest/evaluation/evaluation_curves_by_model.parquet` |
-| Model Registry | `modelops/registry/model_runs.csv` |
-| Archivos CFO | `app/batch_exports/...` |
-| Predicciones por archivo cargado | `app/batch_uploads/predictions/` |
-| Historial batch upload | `app/batch_uploads/history/uploaded_predictions_history.csv` |
-| Feedback | RDS PostgreSQL |
+```text
+app/batch_exports/todos_los_productos_de_una_tienda/shop_<id>/
+app/batch_exports/segmento_categoria/category_<id>/
+app/batch_exports/catalogo_completo/all/
+app/batch_uploads/predictions/
+app/batch_uploads/history/uploaded_predictions_history.csv
+modelops/latest/
+modelops/registry/
+```
+
+### Outputs operacionales en RDS
+
+- Historial de archivos generados.
+- Feedback del negocio.
+- Eventos de uso.
+- Metadata operacional del producto.
 
 ---
 
@@ -212,73 +281,78 @@ La app consume artefactos publicados en S3 bajo `modelops/latest/`, evitando rec
 
 ```text
 .
-├── backend/                 # Conexiones a S3, RDS, almacenamiento y helpers backend
-├── config/                  # Archivos .example.env y plantillas de configuración
-├── data/examples/           # CSVs pequeños de ejemplo para inferencia batch
-├── docs/                    # Documentación auxiliar y snippets de reporte
-├── frontend/                # Aplicación Streamlit y componentes UI
-├── graficasProyecto/        # Imágenes usadas en README y reporte
-├── infra/                   # Plantillas/recursos de infraestructura
-├── scripts/                 # Entrenamiento, validación, despliegue, permisos y utilidades
-├── src/                     # Lógica ModelOps, métricas y entrenamiento
-├── sql/                     # SQL para RDS/tablas operativas
-├── tests/                   # Pruebas de import, métricas y outputs ModelOps
-├── Dockerfile               # Imagen de la app
-├── pyproject.toml           # Dependencias/configuración Python si aplica
-├── uv.lock                  # Lockfile de uv si aplica
-└── README.md                # Documentación principal del proyecto
-```
-
-No se deben versionar outputs generados localmente como:
-
-```text
-modelops_outputs/
-modelops_outputs_hybrid/
-config/*.env
-frontend/*.before_*
-backend/*.before_*
-.venv/
+├── README.md
+├── Dockerfile
+├── pyproject.toml / uv.lock
+├── frontend/
+│   ├── app.py
+│   ├── batch_upload_inference.py
+│   ├── cfo_s3_exports.py
+│   └── low_activity_kpis.py
+├── backend/
+│   ├── modelops_s3.py
+│   └── storage.py
+├── src/
+│   ├── modelops_v2/
+│   ├── modelops_v3/
+│   └── modelops_hybrid/
+├── scripts/
+│   ├── 06_build_push_app.sh
+│   ├── 07_deploy_ecs.sh
+│   ├── 30_train_compare_models_local.sh
+│   ├── 31_upload_modelops_outputs_s3.py
+│   ├── 40_train_hybrid_router.py
+│   └── ...
+├── infra/
+│   └── cloudformation templates
+├── sql/
+├── tests/
+├── docs/
+│   └── Examen_ProductodeDatos_Avril_Hector.pdf
+├── graficasProyecto/
+│   ├── infraestructura_a1.png
+│   ├── diagrama_entidad_relacion.png
+│   └── capturas de la app/AWS
+└── data/examples/
+    └── batch_upload/
 ```
 
 ---
 
 ## Instalación local
 
-### Requisitos
+### 1. Clonar el repositorio
 
-- Python 3.12
-- uv
-- Docker
-- AWS CLI configurado
-- Cuenta AWS con permisos para S3, ECS, ECR, RDS, CloudFormation e IAM
+```bash
+git clone <URL_DEL_REPO>
+cd Parcial_ProductoDeDatos_MVP
+```
 
-### Crear entorno
+### 2. Instalar dependencias
 
 ```bash
 uv sync
 ```
 
-Si el proyecto usa extras o grupos específicos:
+Si no tienes `uv`, instálalo primero siguiendo la documentación oficial de Astral.
+
+### 3. Configurar variables de entorno
+
+Usa archivos `.example.env` como base. No subas archivos `.env` reales al repositorio.
 
 ```bash
-uv sync --all-extras
+cp config/modelops_v4_3.example.env config/local.env
 ```
 
-### Variables de entorno
+Variables típicas:
 
-Usa archivos `.example.env` como referencia. No subas `.env` ni `config/generated.env` a GitHub.
-
-```bash
-cp config/modelops_v5.example.env config/modelops_v5.env
-```
-
-Para correr local:
-
-```bash
-export USE_MODELOPS_S3=false
-export MODELOPS_LOCAL_ROOT=modelops_outputs_hybrid
-export DATA_DIR=data
-export DISABLE_RDS_WRITES=true
+```text
+AWS_REGION=us-east-1
+MODEL_BUCKET=pfs-modelops-...
+USE_MODELOPS_S3=false
+MODELOPS_LOCAL_ROOT=modelops_outputs_hybrid
+DATA_DIR=data
+DISABLE_RDS_WRITES=true
 ```
 
 ---
@@ -286,92 +360,52 @@ export DISABLE_RDS_WRITES=true
 ## Ejecución local
 
 ```bash
+export USE_MODELOPS_S3=false
+export MODELOPS_LOCAL_ROOT=modelops_outputs_hybrid
+export DATA_DIR=data
+export DISABLE_RDS_WRITES=true
+
 PYTHONPATH=. uv run streamlit run frontend/app.py
 ```
 
-Validar sintaxis de la app:
+Validar sintaxis:
 
 ```bash
 PYTHONPATH=. uv run python scripts/validate_app_syntax.py
-```
-
-Validar outputs ModelOps:
-
-```bash
-PYTHONPATH=. uv run python scripts/32_validate_modelops_outputs.py
 ```
 
 ---
 
 ## Despliegue en AWS
 
-### Construir y subir imagen
+### 1. Construir y subir imagen a ECR
 
 ```bash
 source config/generated.env
 ./scripts/06_build_push_app.sh
 ```
 
-### Actualizar ECS
+### 2. Desplegar ECS/Fargate + ALB
 
 ```bash
-aws ecs update-service \
-  --cluster pfs-mvp-cluster \
-  --service pfs-mvp \
-  --force-new-deployment \
-  --region "$AWS_REGION"
+source config/generated.env
+./scripts/07_deploy_ecs.sh
 ```
 
-### Verificar despliegue
+### 3. Obtener URL pública
 
 ```bash
-aws ecs describe-services \
-  --cluster pfs-mvp-cluster \
-  --services pfs-mvp \
-  --region "$AWS_REGION" \
-  --query "services[0].{running:runningCount,desired:desiredCount,rollout:deployments[0].rolloutState}" \
-  --output table
+./scripts/09_print_outputs.sh
 ```
 
-### Logs
+### 4. Validar app
 
 ```bash
-aws logs tail /ecs/pfs-mvp \
-  --since 20m \
-  --region "$AWS_REGION"
+source config/generated.env
+./scripts/08_smoke_test_cloud.sh
 ```
 
----
-
-## Operación y validación
-
-### Entrenar / comparar modelos
-
-```bash
-PYTHONPATH=. uv run python scripts/40_train_hybrid_router.py
-```
-
-### Subir outputs ModelOps a S3
-
-```bash
-PYTHONPATH=. uv run python scripts/31_upload_modelops_outputs_s3.py \
-  --bucket "$MODEL_BUCKET" \
-  --local-root modelops_outputs_hybrid \
-  --latest-prefix modelops/latest \
-  --registry-prefix modelops/registry
-```
-
-### Probar batch upload
-
-```bash
-PYTHONPATH=. uv run python scripts/85_generate_batch_upload_examples.py \
-  --model-path artifacts/model.joblib \
-  --test-features-path data/prep/test_features.parquet \
-  --test-pairs-path data/prep/test_pairs.parquet \
-  --output-dir data/examples/batch_upload
-```
-
-### Permisos S3 para batch uploads
+### 5. Actualizar permisos S3 para predicciones cargadas
 
 ```bash
 PYTHONPATH=. uv run python scripts/97_grant_task_role_s3_batch_upload_permissions.py \
@@ -382,74 +416,41 @@ PYTHONPATH=. uv run python scripts/97_grant_task_role_s3_batch_upload_permission
 
 ---
 
-## Seguridad y buenas prácticas
+## Operación, estabilidad y seguridad
 
-- No subir credenciales ni `.env`.
-- Usar Secrets Manager para credenciales de RDS.
-- Usar IAM task role para permisos de ECS.
-- Mantener S3 como capa persistente para artefactos.
-- No guardar outputs grandes en Git.
-- Mantener README y documentación actualizados.
-- Separar entrenamiento/scoring pesado de la app Streamlit.
+Durante las pruebas se ajustó la app para renderizar una vista a la vez, reduciendo carga de navegación. También se aumentaron recursos de ECS Fargate y se ajustaron permisos S3 por prefijo.
+
+Buenas prácticas aplicadas:
+
+- No guardar credenciales en código.
+- Secrets Manager para RDS.
+- Task role con permisos específicos sobre S3.
+- CloudWatch Logs para depuración.
+- Separación entre `app/batch_exports/` y `app/batch_uploads/`.
+- `.gitignore` para excluir `.env`, outputs locales, backups y artefactos pesados.
 
 ---
 
-## Troubleshooting
+## Documentación del reporte
 
-### `502 Connection failed`
-
-1. Revisar logs:
-
-```bash
-aws logs tail /ecs/pfs-mvp --since 20m --region "$AWS_REGION"
-```
-
-2. Aumentar recursos Fargate si hay reinicios/OOM:
-
-```bash
-PYTHONPATH=. uv run python scripts/83_update_ecs_fargate_resources.py \
-  --cluster pfs-mvp-cluster \
-  --service pfs-mvp \
-  --cpu 2048 \
-  --memory 4096 \
-  --region "$AWS_REGION"
-```
-
-3. Aumentar timeout del ALB:
-
-```bash
-PYTHONPATH=. uv run python scripts/84_update_alb_timeout.py \
-  --name-contains pfs-mvp \
-  --idle-timeout 120 \
-  --region "$AWS_REGION"
-```
-
-### `AccessDenied` al guardar batch uploads
-
-Dar permisos al task role:
-
-```bash
-PYTHONPATH=. uv run python scripts/97_grant_task_role_s3_batch_upload_permissions.py \
-  --role-name pfs-mvp-task-role \
-  --bucket "$MODEL_BUCKET" \
-  --region "$AWS_REGION"
-```
-
-### No aparecen curvas de algún modelo
-
-Verifica que existan predicciones por modelo en:
+El reporte metodológico completo debe guardarse en:
 
 ```text
-modelops/latest/evaluation/evaluation_curves_by_model.parquet
+docs/Examen_ProductodeDatos_Avril_Hector.pdf
 ```
 
-Si el modelo existe en registry pero no tiene curva, no se puede graficar honestamente hasta publicar sus predicciones por bucket.
+Este PDF documenta contexto de negocio, arquitectura, modelo de datos, evaluación, tour de la aplicación, evidencias AWS, operación, costos y cobertura de la rúbrica.
 
 ---
 
-## Licencia
+## Limitaciones y siguientes pasos
 
-Proyecto académico desarrollado para el curso **Arquitectura de Productos de Datos y Métodos de Gran Escala**. Uso educativo.
+- Agregar autenticación y autorización por rol.
+- Automatizar ModelOps con jobs programados o pipelines externos.
+- Monitorear drift y desempeño cuando llegue el valor real futuro.
+- Evaluar SageMaker Batch Transform si crece el volumen de scoring.
+- Enriquecer cold-start con catálogo de negocio, lanzamientos y atributos externos.
+- Agregar notificaciones cuando un archivo CFO o batch cargado quede listo.
 
 ---
 
@@ -458,4 +459,6 @@ Proyecto académico desarrollado para el curso **Arquitectura de Productos de Da
 - Avril Salazar Rodríguez
 - Héctor Vilchis Peralta
 
-Instituto Tecnológico Autónomo de México (ITAM), mayo 2026.
+Curso: **Arquitectura de Productos de Datos y Métodos de Gran Escala**  
+Institución: **ITAM**  
+Fecha: **Mayo 2026**

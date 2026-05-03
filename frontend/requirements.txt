@@ -1,0 +1,12 @@
+streamlit
+pandas
+numpy
+plotly
+scikit-learn
+joblib
+pyarrow
+boto3
+botocore
+sqlalchemy
+psycopg2-binary
+lightgbm

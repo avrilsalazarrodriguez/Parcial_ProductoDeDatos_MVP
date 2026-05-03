@@ -1,0 +1,10 @@
+.git
+.venv
+__pycache__/
+*.pyc
+.DS_Store
+notebooks
+assets
+tree.txt
+.ipynb_checkpoints
+tmp/
