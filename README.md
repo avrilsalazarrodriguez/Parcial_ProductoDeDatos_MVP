@@ -86,7 +86,7 @@ La arquitectura separa tres capas:
 El modelo de datos principal vive en S3 y Glue Data Catalog. RDS se usa como base operacional, no como data lake completo.
 
 <p align="center">
-  <img src="graficasProyecto/diagrama_entidad_relacion.png" alt="Diagrama entidad-relación del producto de datos" width="900">
+  <img src="graficasProyecto/ER1transpa.png" alt="Diagrama entidad-relación del producto de datos" width="900">
 </p>
 
 **Lectura del diagrama.** La tabla `features` alimenta el scoring. De ahí se construye `forecast_detail`, que guarda la predicción final y su trazabilidad. Cuando existe valor real, `evaluation_detail` permite calcular errores. A partir de esa evaluación se generan vistas agregadas por producto, categoría y modelo.
