@@ -1,0 +1,28 @@
+# Entornos locales
+.venv/
+__pycache__/
+*.pyc
+
+# Secrets / envs
+.env
+.env.local
+config/generated.env
+config/*.env
+!config/*.example.env
+
+# Backups generados durante parches
+*.before_*
+frontend/*.before_*
+backend/*.before_*
+
+# Outputs locales generados
+modelops_outputs/
+modelops_outputs_hybrid/
+
+# Archivos temporales
+.DS_Store
+*.zip
+
+# Caches
+.pytest_cache/
+.streamlit/secrets.toml
