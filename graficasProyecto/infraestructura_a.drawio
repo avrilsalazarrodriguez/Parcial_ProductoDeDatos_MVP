@@ -1,0 +1,109 @@
+<mxfile host="app.diagrams.net" agent="OpenAI">
+  <diagram id="aws-tech-simple" name="Infraestructura AWS simplificada">
+    <mxGraphModel dx="1437" dy="853" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1500" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;strokeColor=none;fillColor=none;fontSize=26;fontStyle=1;fontColor=#0f172a;align=left;verticalAlign=middle;" value="Infraestructura AWS de App MVP" vertex="1">
+          <mxGeometry height="35" width="700" x="40" y="25" as="geometry" />
+        </mxCell>
+        <mxCell id="sub" parent="1" style="text;html=1;strokeColor=none;fillColor=none;fontSize=12;fontColor=#334155;align=left;verticalAlign=middle;" value="Vista a nivel tecnologías AWS ocupadas: CloudFormation, ALB, ECS/Fargate, ECR, S3, RDS, Secrets, Glue y CloudWatch." vertex="1">
+          <mxGeometry height="25" width="1000" x="40" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="region" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#94a3b8;strokeWidth=2;arcSize=12;fontSize=13;align=left;" value="" vertex="1">
+          <mxGeometry height="855" width="1840" x="200" y="90" as="geometry" />
+        </mxCell>
+        <mxCell id="vpc" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eef6ff;strokeColor=#60a5fa;strokeWidth=2;arcSize=8;fontSize=13;" value="&lt;b&gt;VPC pfs-mvp&lt;/b&gt;&lt;br&gt;red de la aplicación" vertex="1">
+          <mxGeometry height="380" width="690" x="260" y="260" as="geometry" />
+        </mxCell>
+        <mxCell id="user" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#64748b;strokeWidth=2;fontColor=#0f172a;fontSize=13;arcSize=10;" value="&lt;b&gt;Usuario / navegador&lt;/b&gt;&lt;br&gt;UI Streamlit" vertex="1">
+          <mxGeometry height="75" width="165" y="367.5" as="geometry" />
+        </mxCell>
+        <mxCell id="alb" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;arcSize=10;" value="&lt;b&gt;Application Load Balancer&lt;/b&gt;&lt;br&gt;entrada HTTP / WebSocket" vertex="1">
+          <mxGeometry height="90" width="230" x="320" y="360" as="geometry" />
+        </mxCell>
+        <mxCell id="ecs" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;arcSize=10;" value="&lt;b&gt;ECS Service + Fargate&lt;/b&gt;&lt;br&gt;contenedor Streamlit&lt;br&gt;app.py" vertex="1">
+          <mxGeometry height="120" width="260" x="670" y="345" as="geometry" />
+        </mxCell>
+        <mxCell id="cf" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#f97316;strokeWidth=2;fontSize=13;arcSize=10;" value="&lt;b&gt;CloudFormation&lt;/b&gt;&lt;br&gt;aprovisiona infraestructura" vertex="1">
+          <mxGeometry height="80" width="260" x="640" y="140" as="geometry" />
+        </mxCell>
+        <mxCell id="scripts" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#64748b;strokeWidth=2;fontColor=#0f172a;fontSize=13;arcSize=10;" value="&lt;b&gt;Scripts AWS CLI&lt;/b&gt;&lt;br&gt;deploy, outputs, redeploy" vertex="1">
+          <mxGeometry height="80" width="220" x="260" y="140" as="geometry" />
+        </mxCell>
+        <mxCell id="ecr" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#10b981;strokeWidth=2;fontColor=#0f172a;fontSize=13;arcSize=10;" value="&lt;b&gt;ECR Repository&lt;/b&gt;&lt;br&gt;imagen Docker de la app" vertex="1">
+          <mxGeometry height="80" width="300" x="1080" y="135" as="geometry" />
+        </mxCell>
+        <mxCell id="s3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#10b981;strokeWidth=2;fontColor=#0f172a;fontSize=13;arcSize=10;" value="&lt;b&gt;S3 ModelOps&lt;/b&gt;&lt;br&gt;modelos, features, CFO,&lt;br&gt;predicciones cargadas" vertex="1">
+          <mxGeometry height="105" width="300" x="1170" y="262.5" as="geometry" />
+        </mxCell>
+        <mxCell id="secrets" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3e8ff;strokeColor=#8b5cf6;strokeWidth=2;fontColor=#0f172a;fontSize=13;arcSize=10;" value="&lt;b&gt;Secrets Manager&lt;/b&gt;&lt;br&gt;credenciales / configuración" vertex="1">
+          <mxGeometry height="80" width="300" x="1640" y="465" as="geometry" />
+        </mxCell>
+        <mxCell id="rds" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#ef4444;strokeWidth=2;fontColor=#0f172a;fontSize=13;arcSize=10;" value="&lt;b&gt;RDS PostgreSQL&lt;/b&gt;&lt;br&gt;feedback e historial CFO" vertex="1">
+          <mxGeometry height="80" width="300" x="1010" y="680" as="geometry" />
+        </mxCell>
+        <mxCell id="logs" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#64748b;strokeWidth=2;fontColor=#0f172a;fontSize=13;arcSize=10;" value="&lt;b&gt;CloudWatch Logs&lt;/b&gt;&lt;br&gt;logs de aplicación y operación" vertex="1">
+          <mxGeometry height="80" width="300" x="1390" y="620" as="geometry" />
+        </mxCell>
+        <mxCell id="glue" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#10b981;strokeWidth=2;fontColor=#0f172a;fontSize=13;arcSize=10;" value="&lt;b&gt;Glue Data Catalog&lt;/b&gt;&lt;br&gt;catálogo de datasets&lt;br&gt;y particiones" vertex="1">
+          <mxGeometry height="80" width="300" x="1650" y="275" as="geometry" />
+        </mxCell>
+        <mxCell id="paths" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7cc;strokeColor=#f59e0b;strokeWidth=2;dashed=1;fontSize=12;fontColor=#0f172a;arcSize=8;" value="&lt;b&gt;Prefijos S3 usados&lt;/b&gt;&lt;br&gt;&lt;b&gt;ModelOps:&lt;/b&gt; modelops/latest/, modelops/registry/&lt;br&gt;&lt;b&gt;CFO:&lt;/b&gt; app/batch_exports/catalogo_completo/all/ · shop_&amp;lt;shop_id&amp;gt;/ · category_&amp;lt;item_category_id&amp;gt;/ (Particiones)&lt;br&gt;&lt;b&gt;Predicciones cargadas:&lt;/b&gt; app/batch_uploads/predictions/ &lt;i&gt;sin particionar&lt;/i&gt;&lt;br&gt;&lt;b&gt;Historial para CFO:&lt;/b&gt; app/batch_uploads/history/uploaded_predictions_history.csv" vertex="1">
+          <mxGeometry height="125" width="760" x="240" y="717.5" as="geometry" />
+        </mxCell>
+        <mxCell id="e_user_alb" edge="1" parent="1" source="user" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2;endArrow=block;endFill=1;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;" target="alb" value="abre app">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_alb_ecs" edge="1" parent="1" source="alb" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2;endArrow=block;endFill=1;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;" target="ecs" value="enruta requests">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_scripts_cf" edge="1" parent="1" source="scripts" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2;endArrow=block;endFill=1;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;strokeColor=#2563eb;" target="cf" value="ejecuta despliegue">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_cf_region" edge="1" parent="1" source="cf" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2;endArrow=block;endFill=1;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;dashed=1;" target="region" value="crea y actualiza todos los recursos AWS">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="555" y="240" />
+              <mxPoint x="555" y="250" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_ecr_ecs" edge="1" parent="1" source="ecr" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2;endArrow=block;endFill=1;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;strokeColor=#059669;" target="ecs" value="entrega imagen Docker">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1000" y="175" />
+              <mxPoint x="1000" y="345" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_ecs_s3" edge="1" parent="1" source="ecs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2;endArrow=block;endFill=1;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;strokeColor=#059669;" target="s3" value="lee modelos/features y guarda archivos">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ecs_secrets" edge="1" parent="1" source="ecs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2;endArrow=block;endFill=1;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;strokeColor=#059669;" target="secrets" value="lee credenciales">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ecs_rds" edge="1" parent="1" source="ecs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2;endArrow=block;endFill=1;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;strokeColor=#dc2626;" target="rds" value="guarda feedback e historial CFO">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ecs_logs" edge="1" parent="1" source="ecs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2;endArrow=block;endFill=1;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;" target="logs" value="escribe logs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_s3_glue" edge="1" parent="1" source="s3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2;endArrow=block;endFill=1;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;strokeColor=#059669;" target="glue" value="cataloga datos y particiones">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_s3_paths" edge="1" parent="1" source="s3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2;endArrow=block;endFill=1;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;strokeColor=#059669;" target="paths" value="usa estos prefijos">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1030" y="300" />
+              <mxPoint x="1030" y="650" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="PjR8u7qBByIl1TVJBXdW-4" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;fontSize=16;" value="&lt;b style=&quot;text-align: left;&quot;&gt;AWS Region (us-east-1)&lt;/b&gt;" vertex="1">
+          <mxGeometry height="30" width="1580" x="280" y="100" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -1,9 +1,0 @@
-2026-02-14 00:05:19,477 - __main__ - INFO - Iniciando inferencia batch.
-2026-02-14 00:05:19,478 - __main__ - INFO - Features de inferencia encontrados: /Users/hectorperalta/Documents/tarea3-productodedatos/data/inference/test_features.parquet
-2026-02-14 00:05:19,506 - __main__ - INFO - test_features: filas=214200 cols=47
-2026-02-14 00:05:19,511 - __main__ - INFO - test_pairs: filas=214200 cols=2
-2026-02-14 00:05:19,530 - __main__ - INFO - raw_test: filas=214200 cols=3
-2026-02-14 00:05:19,993 - __main__ - INFO - Generando predicciones.
-2026-02-14 00:05:20,269 - __main__ - INFO - Preds: n=214200 min=0.0172 p50=0.0685 max=15.6685
-2026-02-14 00:05:20,374 - __main__ - INFO - Submission guardado: /Users/hectorperalta/Documents/tarea3-productodedatos/data/predictions/submission.csv filas=214200
-2026-02-14 00:05:20,374 - __main__ - INFO - Inferencia terminada. duracion_seg=0.90
