@@ -1,81 +1,82 @@
-"""Metrics for retail demand model comparison."""
+"""Metrics for model comparison.
 
+Selection policy in this version:
+1. primary metric = RMSE
+2. tie-breaker = MAE
+"""
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass, asdict
 
 import numpy as np
 import pandas as pd
 
 
-def clip_sales(values: pd.Series | np.ndarray, lower: float = 0.0, upper: float = 20.0) -> np.ndarray:
-    return np.clip(pd.Series(values).astype(float).fillna(0).to_numpy(), lower, upper)
+@dataclass
+class ModelRunResult:
+    model_id: str
+    model_name: str
+    model_family: str
+    rmse: float
+    mae: float
+    smape: float
+    wape: float
+    bias: float
+    nonzero_recall: float
+    n_valid: int
+    status: str = "challenger"
+    is_champion: bool = False
+    model_scope: str = "global"
+    model_description: str = ""
+
+    def as_dict(self) -> dict:
+        return asdict(self)
 
 
-def rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    return float(math.sqrt(np.mean((y_pred - y_true) ** 2)))
+def clip_target(values: pd.Series | np.ndarray) -> np.ndarray:
+    return np.clip(pd.to_numeric(pd.Series(values), errors="coerce").fillna(0).values, 0, 20)
 
 
-def mae(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    return float(np.mean(np.abs(y_pred - y_true)))
-
-
-def smape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    denom = np.abs(y_true) + np.abs(y_pred)
-    mask = denom > 0
-    if not np.any(mask):
-        return 0.0
-    return float(np.mean(2.0 * np.abs(y_pred[mask] - y_true[mask]) / denom[mask]))
-
-
-def wape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    denom = float(np.sum(np.abs(y_true)))
-    if denom <= 0:
-        return mae(y_true, y_pred)
-    return float(np.sum(np.abs(y_pred - y_true)) / denom)
-
-
-def bias(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    return float(np.mean(y_pred - y_true))
-
-
-def nonzero_recall(y_true: np.ndarray, y_pred: np.ndarray, threshold: float = 0.05) -> float:
-    mask = y_true > 0
-    if not np.any(mask):
-        return 0.0
-    return float(np.mean(y_pred[mask] > threshold))
-
-
-def build_metrics(
-    model_id: str,
-    model_name: str,
-    model_family: str,
-    y_true: np.ndarray,
-    y_pred: np.ndarray,
-    y_naive: np.ndarray,
-) -> dict:
-    """Build a normalized metric row.
-
-    The model decision metric is MAE. WAPE is still reported because it helps
-    business users understand relative error, but it is not the promotion metric.
-    """
-    y_true = clip_sales(y_true)
-    y_pred = clip_sales(y_pred)
-    y_naive = clip_sales(y_naive)
-    model_mae = mae(y_true, y_pred)
-    naive_mae = mae(y_true, y_naive)
+def compute_metrics(y_true: pd.Series | np.ndarray, y_pred: pd.Series | np.ndarray) -> dict[str, float]:
+    y_true_arr = clip_target(y_true)
+    y_pred_arr = clip_target(y_pred)
+    error = y_pred_arr - y_true_arr
+    abs_error = np.abs(error)
+    denom = np.abs(y_true_arr) + np.abs(y_pred_arr)
+    smape = np.where(denom > 0, 2 * abs_error / denom, 0.0)
+    total_true = float(np.sum(np.abs(y_true_arr)))
     return {
-        "model_id": model_id,
-        "model_name": model_name,
-        "model_family": model_family,
-        "mae": model_mae,
-        "rmse": rmse(y_true, y_pred),
-        "smape": smape(y_true, y_pred),
-        "wape": wape(y_true, y_pred),
-        "bias": bias(y_true, y_pred),
-        "nonzero_recall": nonzero_recall(y_true, y_pred),
-        "naive_mae": naive_mae,
-        "naive_rmse": rmse(y_true, y_naive),
-        "beats_naive_mae": bool(model_mae <= naive_mae),
-        "selection_metric": "mae",
+        "rmse": float(math.sqrt(np.mean(error**2))),
+        "mae": float(np.mean(abs_error)),
+        "smape": float(np.mean(smape)),
+        "wape": float(np.sum(abs_error) / total_true) if total_true > 0 else float(np.mean(abs_error)),
+        "bias": float(np.mean(error)),
+        "nonzero_recall": float(np.mean(y_pred_arr[y_true_arr > 0] > 0.05)) if np.any(y_true_arr > 0) else 0.0,
     }
+
+
+def select_champion(results: list[ModelRunResult], incumbent_id: str | None = None, min_improvement: float = 0.0) -> list[ModelRunResult]:
+    if not results:
+        return results
+    for r in results:
+        r.is_champion = False
+        r.status = "challenger"
+    sorted_results = sorted(results, key=lambda r: (r.rmse, r.mae))
+    best = sorted_results[0]
+    if incumbent_id:
+        incumbent = next((r for r in results if r.model_id == incumbent_id), None)
+        if incumbent is not None and best.model_id != incumbent.model_id:
+            threshold = incumbent.rmse * (1 - min_improvement)
+            if best.rmse >= threshold:
+                best = incumbent
+    best.is_champion = True
+    best.status = "champion"
+    return results
+
+
+def results_df(results: list[ModelRunResult]) -> pd.DataFrame:
+    df = pd.DataFrame([r.as_dict() for r in results])
+    if df.empty:
+        return df
+    return df.sort_values(["is_champion", "rmse", "mae"], ascending=[False, True, True]).reset_index(drop=True)

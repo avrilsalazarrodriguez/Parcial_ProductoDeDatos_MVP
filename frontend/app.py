@@ -24,6 +24,9 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from frontend.batch_upload_inference import render_uploaded_batch_inference
+from frontend.low_activity_kpis import render_low_activity_products_table
+
 APP_ROOT = Path(__file__).resolve().parents[1]
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
@@ -49,6 +52,11 @@ try:  # noqa: E402
     from backend.storage import upload_batch_dataframe_to_s3
 except Exception:  # noqa: BLE001
     upload_batch_dataframe_to_s3 = None
+
+try:  # noqa: E402
+    from frontend.cfo_s3_exports import upload_cfo_dataframe_partitioned_to_s3
+except Exception:  # noqa: BLE001
+    upload_cfo_dataframe_partitioned_to_s3 = None
 
 try:  # noqa: E402
     from backend.db import (
@@ -103,15 +111,44 @@ DEFAULT_SHOP_NAMES = {
 }
 
 MODEL_DESCRIPTIONS = {
-    "hurdle_hgb": "Modelo de dos etapas: estima probabilidad de venta y luego unidades esperadas si hay venta.",
-    "incumbent_two_stage": "Modelo original del proyecto con diseño de dos etapas. Sirve como incumbent productivo.",
-    "original_lightgbm_two_stage": "LightGBM original de dos etapas: clasificador de venta + regresor de unidades.",
-    "hgb_poisson": "Gradient boosting con pérdida Poisson, útil para conteos no negativos.",
-    "poisson_hgb": "Gradient boosting con pérdida Poisson, útil para conteos no negativos.",
-    "item_mean_fallback": "Baseline por promedio histórico de producto; sirve como fallback simple.",
-    "naive_lag1": "Baseline naive que usa la venta del último periodo observado.",
-    "naive_last_observed": "Baseline naive que usa la venta del último periodo observado.",
+    "hybrid_router_v1": (
+        "Router híbrido final: no es un único modelo, sino una política de enrutamiento. "
+        "Usa reglas de inactividad, naive para demanda reciente, especialista recurrente y Hurdle HGB según features históricas."
+    ),
+    "hurdle_hgb": (
+        "Hurdle HGB de dos etapas: primero estima probabilidad de venta y después unidades esperadas. "
+        "Es útil para demanda intermitente con muchos ceros."
+    ),
+    "incumbent_two_stage": (
+        "LightGBM original de dos etapas: modelo original del proyecto con tratamientos y transformaciones previas. "
+        "Se conserva como incumbent para comparar contra los challengers."
+    ),
+    "original_lightgbm_two_stage": (
+        "LightGBM original de dos etapas: clasificador venta/no venta + regresor de unidades, con el pipeline original de features."
+    ),
+    "hgb_poisson": (
+        "HistGradientBoosting con pérdida Poisson: modelo para conteos no negativos; útil cuando la variable objetivo es número de unidades."
+    ),
+    "poisson_hgb": (
+        "HistGradientBoosting con pérdida Poisson: alternativa de conteo para demanda no negativa."
+    ),
+    "specialist_recurrent": (
+        "Especialista de demanda recurrente: entrenado para producto-tienda con señales históricas de venta reciente o recurrente."
+    ),
+    "rolling_mean_3": (
+        "Promedio móvil de los últimos 3 rezagos: baseline fuerte para productos donde la señal reciente importa."
+    ),
+    "item_mean_fallback": (
+        "Promedio histórico por producto: baseline/fallback cuando el historial de tienda-producto es insuficiente."
+    ),
+    "naive_lag1": (
+        "Naive último periodo: usa la venta del mes anterior. Es baseline obligatorio para demostrar mejora real."
+    ),
+    "naive_last_observed": (
+        "Naive último periodo observado: baseline simple que conserva la señal de ventas recientes."
+    ),
 }
+
 
 
 # ---------- Generic helpers ----------
@@ -308,13 +345,39 @@ def enrich_business_names(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def visible_forecast_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Columns shown in business-facing forecast tables.
+
+    Decision columns are kept near the prediction so users can understand why a
+    row used a particular component of the hybrid router.
+    """
+    out = add_intuitive_columns(df) if df is not None and not df.empty else df
     preferred = [
-        "shop_id", "shop_name", "item_id", "item_name", "prediction", "model_id", "model_name", "model_scope",
-        "item_category_id", "item_category_name", "category_group", "recency_label", "recency",
+        "shop_id",
+        "shop_name",
+        "item_id",
+        "item_name",
+        "prediction",
+        "decision_recommendation",
+        "model_scope",
+        "routing_reason",
+        "model_id",
+        "model_name",
+        "item_category_id",
+        "item_category_name",
+        "category_group",
+        "segment_key",
+        "segment_name",
+        "recency_label",
+        "recency",
+        "pred_champion",
+        "pred_naive_lag1",
+        "pred_rolling_mean_3",
+        "pred_specialist_recurrent",
     ]
-    cols = [c for c in preferred if c in df.columns]
-    cols.extend([c for c in df.columns if c not in cols and not c.endswith("_label")])
-    return df[cols]
+    cols = [c for c in preferred if c in out.columns]
+    cols.extend([c for c in out.columns if c not in cols and not c.endswith("_label")])
+    return out[cols]
+
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -400,6 +463,16 @@ def mae(y_true: pd.Series, y_pred: pd.Series) -> float:
     return float(np.mean(np.abs(y_true - y_pred)))
 
 
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_eval_df_cached() -> pd.DataFrame:
+    """Cached local evaluation sample.
+
+    This avoids rebuilding local predictions on every widget interaction.
+    The cache is short-lived so new ModelOps/local files can still be picked up.
+    """
+    return build_local_eval_sample(load_valid_data(), load_model(), load_batch_forecast())
+
 def current_champion() -> dict[str, Any]:
     return load_champion()
 
@@ -409,272 +482,865 @@ def current_metrics() -> dict[str, Any]:
 
 
 
-# ---------- Visual analytics helpers ----------
+# ---------- Final visual/decision helpers ----------
 
-def short_label(value: object, max_len: int = 55) -> str:
-    """Shorten long labels so Plotly charts remain readable."""
+MODEL_DESCRIPTIONS.update({
+    "HistGradientBoosting Poisson": MODEL_DESCRIPTIONS["hgb_poisson"],
+    "Especialista demanda recurrente": MODEL_DESCRIPTIONS["specialist_recurrent"],
+    "Hybrid Router: inactive + naive + specialist + HGB": MODEL_DESCRIPTIONS["hybrid_router_v1"],
+    "Rolling mean últimos 3 lags": MODEL_DESCRIPTIONS["rolling_mean_3"],
+    "LightGBM original dos etapas": MODEL_DESCRIPTIONS["incumbent_two_stage"],
+    "Hurdle HGB": MODEL_DESCRIPTIONS["hurdle_hgb"],
+    "Naive último periodo": MODEL_DESCRIPTIONS["naive_lag1"],
+})
+
+MODEL_SCOPE_DESCRIPTIONS = {
+    "inactive:no_recent_sales": "Regla de inactividad: producto-tienda sin ventas recientes o sin historial útil; predicción conservadora cercana a cero.",
+    "baseline:naive_recent_demand": "Baseline naive: usa señal reciente, normalmente cnt_lag_1. Útil cuando el último periodo conserva mejor la demanda.",
+    "specialist:recurrent_demand": "Especialista de demanda recurrente: modelo entrenado para productos con señales históricas de venta recurrente.",
+    "challenger:hurdle_hgb": "Modelo Hurdle HGB: modelo de dos etapas para demanda baja e intermitente con muchos ceros.",
+    "hybrid_router_v1": "Router híbrido: política que elige entre regla inactiva, naive, especialista recurrente y HGB.",
+    "incumbent:lightgbm_two_stage": "Modelo original LightGBM de dos etapas con las transformaciones originales del proyecto.",
+    "incumbent_two_stage": "Modelo original LightGBM de dos etapas con las transformaciones originales del proyecto.",
+    "original_two_stage": "Diseño original de dos etapas: clasifica venta/no venta y estima unidades si hay venta.",
+    "global": "Modelo global aplicado sin segmentación específica.",
+    "fallback": "Regla de respaldo cuando no hay historial suficiente.",
+}
+
+MODEL_ID_DESCRIPTIONS = {
+    "hybrid_router_v1": "Router híbrido: decide por fila si usar regla cero, naive, especialista recurrente o HGB con base en variables históricas.",
+    "hurdle_hgb": "Hurdle HGB: dos etapas para demanda intermitente con muchos ceros.",
+    "incumbent_two_stage": "LightGBM original de dos etapas: modelo original del proyecto con transformaciones previas.",
+    "LightGBM original dos etapas": "LightGBM original de dos etapas: incumbent histórico del proyecto.",
+    "original_lightgbm_two_stage": "LightGBM original de dos etapas: clasificador venta/no venta + regresor de unidades.",
+    "naive_lag1": "Naive último periodo: usa la venta del último mes observado.",
+    "Naive último periodo": "Naive último periodo: baseline simple para comparar calidad.",
+    "rolling_mean_3": "Promedio móvil últimos 3 rezagos: baseline robusto para demanda reciente.",
+    "Rolling mean últimos 3 lags": "Promedio móvil últimos 3 rezagos: baseline para demanda reciente.",
+    "specialist_recurrent": "Especialista de demanda recurrente: entrenado para series con señales de ventas frecuentes.",
+    "Especialista demanda recurrente": "Especialista de demanda recurrente: se usa cuando hay evidencia histórica de ventas recurrentes.",
+    "hgb_poisson": "HistGradientBoosting Poisson: modelo de conteo no negativo para unidades vendidas.",
+    "HistGradientBoosting Poisson": "HistGradientBoosting con pérdida Poisson para conteos de ventas.",
+    "item_mean_fallback": "Promedio histórico por producto: fallback cuando el historial es limitado.",
+    "Promedio histórico por producto": "Promedio histórico por producto: baseline/fallback interpretativo.",
+    "Modelo ganador": "Modelo seleccionado como champion o componente final usado por el router.",
+    "Real": "Valor real promedio observado en validación para el bucket de demanda.",
+}
+
+
+def first_existing_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
+    """Return first existing column from candidates."""
+    if df is None or df.empty:
+        return None
+    for col in candidates:
+        if col in df.columns:
+            return col
+    return None
+
+
+def short_text(value: object, max_len: int = 55) -> str:
+    """Short label for plot axes."""
     if value is None or pd.isna(value):
         return "sin dato"
     text = str(value)
     return text if len(text) <= max_len else text[: max_len - 3] + "..."
 
 
-def metric_col(df: pd.DataFrame) -> str | None:
-    """Return the preferred error metric column."""
-    for col in ["rmse", "mae", "abs_error"]:
-        if col in df.columns:
-            return col
-    return None
+def metric_col_for_error(df: pd.DataFrame) -> str | None:
+    """Best available error metric for evaluation tables/charts."""
+    return first_existing_col(df, ["rmse", "mae", "abs_error"])
 
 
-def category_display(df: pd.DataFrame) -> pd.Series:
-    """Stable category label: ID first, short name after."""
+def category_display_series(df: pd.DataFrame) -> pd.Series:
+    """Stable category label: ID first and short name when available."""
     if "item_category_id" in df.columns:
         base = "cat_" + df["item_category_id"].astype(str)
     elif "segment_key" in df.columns:
         base = df["segment_key"].astype(str)
     else:
-        base = pd.Series("sin_categoria", index=df.index)
+        base = pd.Series(["sin_categoria"] * len(df), index=df.index)
 
-    if "segment_name" in df.columns:
-        return base + " — " + df["segment_name"].map(lambda x: short_label(x, 36))
-    if "item_category_name" in df.columns:
-        return base + " — " + df["item_category_name"].map(lambda x: short_label(x, 36))
+    for name_col in ["segment_name", "item_category_name", "category_group"]:
+        if name_col in df.columns:
+            return base + " — " + df[name_col].map(lambda x: short_text(x, 38))
     return base
 
 
-def product_display(df: pd.DataFrame) -> pd.Series:
-    """Stable product label: item_id first, short item name after."""
+def product_display_series(df: pd.DataFrame) -> pd.Series:
+    """Stable product label: item_id + short name when available."""
     if "item_id" in df.columns:
         base = df["item_id"].astype(str)
     else:
-        base = pd.Series("sin_item", index=df.index)
+        base = pd.Series(["sin_item"] * len(df), index=df.index)
     if "item_name" in df.columns:
-        return base + " — " + df["item_name"].map(lambda x: short_label(x, 48))
+        return base + " — " + df["item_name"].map(lambda x: short_text(x, 50))
     return base
 
 
-def local_demand_curve(eval_source: pd.DataFrame) -> pd.DataFrame:
-    """Build local demand curve with real, model prediction and naive."""
-    if eval_source.empty or not {"y", "prediction"}.issubset(eval_source.columns):
-        return pd.DataFrame()
-    out = eval_source.copy()
-    out["demand_bucket"] = pd.cut(
-        out["y"],
-        bins=[-0.1, 0, 1, 3, 7, 20],
-        include_lowest=True,
-    ).astype(str)
-    return (
-        out.groupby("demand_bucket", as_index=False, observed=False)
-        .agg(
-            real_mean=("y", "mean"),
-            pred_mean=("prediction", "mean"),
-            naive_mean=("naive_prediction", "mean") if "naive_prediction" in out.columns else ("prediction", "mean"),
+
+
+def decision_label_from_row(row: pd.Series) -> str:
+    """Human-readable final decision/model recommendation for a prediction row."""
+    scope = str(row.get("model_scope", "") or "").strip()
+    reason = str(row.get("routing_reason", "") or "").strip()
+    model_id = str(row.get("model_id", "") or "").strip()
+    text = f"{scope} {reason} {model_id}".lower()
+
+    # Order matters: specialist scopes often contain routing reasons with
+    # rolling_mean, but the final decision is the specialist model, not a
+    # rolling baseline.
+    if scope.startswith("inactive:") or "inactive" in text or "recency>=99" in text:
+        return "Regla cero / producto inactivo"
+    if scope.startswith("specialist:") or "specialist" in text or "recurrent" in scope.lower():
+        return "Modelo especialista de demanda recurrente"
+    if scope.startswith("baseline:naive") or "naive" in text:
+        return "Baseline naive por demanda reciente"
+    if scope.startswith("baseline:rolling") or "rolling" in text:
+        return "Baseline promedio móvil"
+    if "incumbent" in text or "lightgbm" in text or "original_two_stage" in text:
+        return "Modelo original LightGBM dos etapas"
+    if scope.startswith("challenger:hurdle") or "hurdle" in text:
+        return "Modelo ganador Hurdle HGB"
+    if scope:
+        return f"Política/modelo: {scope}"
+    if model_id:
+        return f"Modelo registrado: {model_id}"
+
+    # Aggregated evaluation/performance tables often do not have model_scope.
+    # Avoid showing an empty/noisy decision in those cases.
+    if any(col in row.index for col in ["rmse", "mae", "wape", "smape", "bias"]):
+        return "Performance agregada del segmento/producto"
+    if any(col in row.index for col in ["prediction", "pred_mean", "y", "y_true", "true_mean", "y_mean"]):
+        return "Predicción evaluada del modelo actual"
+    return "Sin decisión registrada"
+
+def review_reason_from_row(row: pd.Series) -> str:
+    """Human-readable reason for feedback/review tables."""
+    if "review_reason" in row.index and pd.notna(row.get("review_reason")):
+        value = str(row.get("review_reason")).strip()
+        if value and value.lower() not in UNKNOWN_TEXT:
+            return value
+    error = row.get("error_signed", np.nan)
+    abs_error = row.get("abs_error", np.nan)
+    try:
+        error_f = float(error)
+    except Exception:
+        error_f = np.nan
+    try:
+        abs_f = float(abs_error)
+    except Exception:
+        abs_f = np.nan
+
+    if pd.notna(error_f) and error_f > 0:
+        return "Sobreestimación: predicción mayor que el real"
+    if pd.notna(error_f) and error_f < 0:
+        return "Subestimación: predicción menor que el real"
+    if pd.notna(abs_f) and abs_f > 0:
+        return "Error absoluto alto en validación"
+
+    scope = str(row.get("model_scope", "") or "")
+    reason = str(row.get("routing_reason", "") or "")
+    if scope or reason:
+        return f"Revisión por {scope or 'política'} / {reason or 'sin razón detallada'}"
+    return "Registro sugerido por ModelOps para revisión"
+
+
+def add_intuitive_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Add user-friendly decision/review/y columns without removing existing data."""
+    if df is None or df.empty:
+        return pd.DataFrame() if df is None else df.copy()
+    out = df.copy()
+    if "decision_recommendation" not in out.columns:
+        out["decision_recommendation"] = out.apply(decision_label_from_row, axis=1)
+    if "review_reason" not in out.columns:
+        out["review_reason"] = out.apply(review_reason_from_row, axis=1)
+    if "y_mean" not in out.columns:
+        for candidate in ["true_mean", "real_mean", "y"]:
+            if candidate in out.columns:
+                out["y_mean"] = out[candidate]
+                break
+    if "pred_mean" not in out.columns and "prediction" in out.columns:
+        out["pred_mean"] = out["prediction"]
+    return out
+
+def decision_first_table(df: pd.DataFrame) -> pd.DataFrame:
+    """Move business/decision columns to the front of a table."""
+    if df is None or df.empty:
+        return pd.DataFrame() if df is None else df.copy()
+    out = add_intuitive_columns(df)
+    preferred = [
+        "shop_id",
+        "shop_name",
+        "item_id",
+        "item_name",
+        "item_category_id",
+        "item_category_name",
+        "segment_key",
+        "segment_name",
+        "prediction",
+        "decision_recommendation",
+        "model_scope",
+        "routing_reason",
+        "review_reason",
+        "model_id",
+        "model_name",
+        "y",
+        "y_true",
+        "y_mean",
+        "true_mean",
+        "real_mean",
+        "pred_mean",
+        "error_signed",
+        "abs_error",
+        "rmse",
+        "mae",
+        "wape",
+        "smape",
+        "bias",
+        "nonzero_recall",
+        "n",
+        "pred_champion",
+        "pred_naive_lag1",
+        "pred_rolling_mean_3",
+        "pred_specialist_recurrent",
+    ]
+    cols = [c for c in preferred if c in out.columns]
+    cols.extend([c for c in out.columns if c not in cols and not c.endswith("_label")])
+    return out[cols]
+
+
+
+def performance_table(df: pd.DataFrame) -> pd.DataFrame:
+    """Business-friendly performance table without routing decision columns.
+
+    Performance/KPI rows are aggregates, so decision_recommendation and
+    review_reason are intentionally hidden to avoid implying row-level routing.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame() if df is None else df.copy()
+    out = df.copy()
+
+    if "y_mean" not in out.columns:
+        for candidate in ["true_mean", "real_mean", "y"]:
+            if candidate in out.columns:
+                out["y_mean"] = out[candidate]
+                break
+    if "pred_mean" not in out.columns and "prediction" in out.columns:
+        out["pred_mean"] = out["prediction"]
+
+    out = out.drop(columns=["decision_recommendation", "review_reason"], errors="ignore")
+
+    preferred = [
+        "shop_id",
+        "shop_name",
+        "item_category_id",
+        "item_category_name",
+        "category_group",
+        "segment_key",
+        "segment_name",
+        "item_id",
+        "item_name",
+        "n",
+        "y_mean",
+        "true_mean",
+        "real_mean",
+        "pred_mean",
+        "prediction",
+        "rmse",
+        "mae",
+        "wape",
+        "smape",
+        "bias",
+        "nonzero_recall",
+        "nonzero_precision",
+    ]
+    cols = [c for c in preferred if c in out.columns]
+    cols.extend([c for c in out.columns if c not in cols and c not in {"decision_recommendation", "review_reason"} and not c.endswith("_label")])
+    return out[cols]
+
+
+def evaluation_detail_table(df: pd.DataFrame) -> pd.DataFrame:
+    """Evaluation sample table without decision/review columns."""
+    if df is None or df.empty:
+        return pd.DataFrame() if df is None else df.copy()
+    out = df.copy()
+
+    if "y_mean" not in out.columns:
+        for candidate in ["y", "y_true", "true_mean", "real_mean"]:
+            if candidate in out.columns:
+                out["y_mean"] = out[candidate]
+                break
+    if "pred_mean" not in out.columns and "prediction" in out.columns:
+        out["pred_mean"] = out["prediction"]
+
+    out = out.drop(columns=["decision_recommendation", "review_reason"], errors="ignore")
+
+    preferred = [
+        "shop_id",
+        "shop_name",
+        "item_id",
+        "item_name",
+        "item_category_id",
+        "item_category_name",
+        "y",
+        "y_true",
+        "y_mean",
+        "prediction",
+        "pred_mean",
+        "naive_prediction",
+        "abs_error",
+        "error_signed",
+        "model_scope",
+        "routing_reason",
+        "recency",
+        "recency_label",
+    ]
+    cols = [c for c in preferred if c in out.columns]
+    cols.extend([c for c in out.columns if c not in cols and c not in {"decision_recommendation", "review_reason"} and not c.endswith("_label")])
+    return out[cols]
+
+
+
+def render_decision_help(context: str = "") -> None:
+    """Explain model_id, model_scope, routing_reason and decision_recommendation."""
+    with st.expander(f"Cómo leer model_id, model_scope, routing_reason y decisión final{context}"):
+        st.markdown(
+            """
+            - **decision_recommendation**: traducción operativa de la decisión final. Es la columna más directa para negocio.
+            - **model_scope**: componente o política que decidió la predicción final de esa fila.
+            - **routing_reason**: regla histórica usada para enrutar la fila. No usa el valor real futuro.
+            - **model_id**: artefacto/familia registrada; puede seguir diciendo `hurdle_hgb` aunque el router haya decidido otro scope, porque el bundle base se registró con ese artefacto.
+            - **prediction**: predicción final consumida por CFO/app.
+            - **pred_champion / pred_naive_lag1 / pred_rolling_mean_3 / pred_specialist_recurrent**: candidatos internos cuando están disponibles.
+            """
         )
+
+
+
+
+DECISION_RECOMMENDATION_DESCRIPTIONS = {
+    "Regla cero / producto inactivo": "Se predice cero porque el historial reciente sugiere producto-tienda inactivo o sin ventas recientes.",
+    "Baseline naive por demanda reciente": "Se usa el último valor observado o señal reciente porque en demanda recurrente el naive puede superar al modelo global.",
+    "Baseline promedio móvil": "Se usa un promedio móvil histórico como baseline cuando la señal reciente es más estable que el modelo global.",
+    "Modelo especialista de demanda recurrente": "Se usa el modelo especialista recurrente (`pred_specialist_recurrent`): no es una media móvil simple. Se activa por señales históricas como `rolling_mean` o `nonzero_rate`, pero la predicción final viene del especialista entrenado para demanda recurrente.",
+    "Modelo original LightGBM dos etapas": "Se usa/consulta el modelo original de dos etapas del proyecto, conservado como incumbent.",
+    "Modelo ganador Hurdle HGB": "Se usa el modelo Hurdle HGB de dos etapas, fuerte para demanda intermitente con muchos ceros.",
+    "Performance agregada del segmento/producto": "Fila agregada de evaluación. No representa una decisión individual de ruteo, sino desempeño por segmento/producto.",
+    "Predicción evaluada del modelo actual": "Fila de evaluación local o feedback donde no hay ruteo explícito; la predicción corresponde al modelo evaluado.",
+    "Sin decisión registrada": "El artefacto no incluye model_scope/routing_reason suficientes para explicar el ruteo.",
+}
+
+
+def decision_recommendation_meaning(value: object) -> str:
+    text = str(value or "").strip()
+    if text in DECISION_RECOMMENDATION_DESCRIPTIONS:
+        return DECISION_RECOMMENDATION_DESCRIPTIONS[text]
+    if text.startswith("Política/modelo:"):
+        return "Scope registrado por ModelOps; revisar model_scope/routing_reason para detalle operativo."
+    if text.startswith("Modelo registrado:"):
+        return "Modelo registrado en ModelOps; no se identificó una política específica para esa fila."
+    return "Decisión generada a partir de model_scope, routing_reason y/o model_id."
+
+
+def review_reason_meaning(value: object) -> str:
+    text = str(value or "").strip()
+    lower = text.lower()
+    if "sobreestim" in lower:
+        return "La predicción quedó por encima del real; revisar riesgo de sobreinventario."
+    if "subestim" in lower:
+        return "La predicción quedó por debajo del real; revisar riesgo de subabasto."
+    if "inactive" in lower or "recency" in lower:
+        return "Revisión por regla de inactividad o ausencia de ventas recientes."
+    if "naive" in lower or "cnt_lag" in lower:
+        return "Revisión por uso de señal reciente / baseline naive."
+    if "specialist" in lower or "recurrent" in lower or "rolling_mean" in lower:
+        return "Revisión por política de demanda recurrente o modelo especialista."
+    if "hurdle" in lower or "sparse" in lower:
+        return "Revisión por ruteo al modelo Hurdle para demanda baja/intermitente."
+    if "error absoluto" in lower:
+        return "Registro sugerido por error alto en validación."
+    if text:
+        return "Razón registrada por ModelOps para priorizar revisión del equipo de negocio/ML."
+    return "Sin razón disponible en el artefacto."
+
+
+def render_decision_recommendation_legend(df: pd.DataFrame, title: str = "Qué significa cada decision_recommendation") -> None:
+    if df is None or df.empty or "decision_recommendation" not in df.columns:
+        return
+    values = [v for v in df["decision_recommendation"].dropna().astype(str).unique() if v.strip()]
+    if not values:
+        return
+    rows = [
+        {"decision_recommendation": value, "significado": decision_recommendation_meaning(value)}
+        for value in sorted(values)
+    ]
+    st.markdown(f"**{title}**")
+    st.dataframe(pd.DataFrame(rows), width="stretch")
+
+
+def render_review_reason_legend(df: pd.DataFrame, title: str = "Qué significa cada review_reason") -> None:
+    if df is None or df.empty or "review_reason" not in df.columns:
+        return
+    values = [v for v in df["review_reason"].dropna().astype(str).unique() if v.strip()]
+    if not values:
+        return
+    rows = [
+        {"review_reason": value, "significado": review_reason_meaning(value)}
+        for value in values[:20]
+    ]
+    st.markdown(f"**{title}**")
+    st.dataframe(pd.DataFrame(rows), width="stretch")
+
+def render_model_scope_legend(scopes: pd.Series | list[str] | None = None) -> None:
+    """Show model_scope labels below coverage charts/tables."""
+    if scopes is None:
+        keys = list(MODEL_SCOPE_DESCRIPTIONS)
+    else:
+        keys = [str(x) for x in pd.Series(scopes).dropna().astype(str).unique()]
+    rows = []
+    for key in keys:
+        desc = MODEL_SCOPE_DESCRIPTIONS.get(key)
+        if desc is None:
+            if key.startswith("challenger:"):
+                desc = "Modelo challenger usado para generar la predicción final."
+            elif key.startswith("baseline:"):
+                desc = "Baseline simple usado por la política de enrutamiento."
+            elif key.startswith("specialist:"):
+                desc = "Modelo especialista para un régimen o segmento de demanda."
+            elif key.startswith("inactive:"):
+                desc = "Regla de inactividad o producto sin ventas recientes."
+            else:
+                desc = "Scope registrado por ModelOps."
+        rows.append({"model_scope": key, "significado": desc})
+    if rows:
+        st.markdown("**Qué significa cada model_scope**")
+        st.dataframe(pd.DataFrame(rows), width="stretch")
+
+
+def render_model_id_legend(model_ids: pd.Series | list[str] | None = None) -> None:
+    """Show model descriptions below model comparison chart."""
+    if model_ids is None:
+        keys = list(MODEL_ID_DESCRIPTIONS)
+    else:
+        keys = [str(x) for x in pd.Series(model_ids).dropna().astype(str).unique()]
+    rows = []
+    for key in keys:
+        if key.lower() == "real":
+            continue
+        desc = MODEL_ID_DESCRIPTIONS.get(key)
+        if desc is None:
+            if "naive" in key.lower():
+                desc = "Baseline naive que usa señal reciente o último periodo."
+            elif "hurdle" in key.lower():
+                desc = "Modelo de dos etapas para demanda intermitente."
+            elif "rolling" in key.lower():
+                desc = "Promedio móvil usado como baseline."
+            elif "specialist" in key.lower():
+                desc = "Modelo especialista para un régimen de demanda."
+            elif "lightgbm" in key.lower() or "incumbent" in key.lower():
+                desc = "Modelo original LightGBM de dos etapas del proyecto."
+            else:
+                desc = "Modelo candidato registrado en ModelOps."
+        rows.append({"modelo/serie": key, "significado": desc})
+    if rows:
+        st.markdown("**Qué representa cada modelo en la gráfica**")
+        st.dataframe(pd.DataFrame(rows), width="stretch")
+
+
+def render_summary_intro_cards() -> None:
+    """Blue cards explaining how to use the dashboard."""
+    st.write(
+        "Este tablero resume el flujo operativo del producto de datos: consulta individual, "
+        "batch CFO, evaluación, KPIs, feedback y registry."
+    )
+    c1, c2, c3 = st.columns(3)
+    card_style = """
+        <div style="background-color:#14314a; padding:18px; border-radius:12px; min-height:118px;">
+        <span style="color:#4aa3ff; font-size:20px; font-weight:700;">{title}</span>
+        <br><span style="font-size:18px; line-height:1.35;">{body}</span>
+        </div>
+    """
+    c1.markdown(card_style.format(title="Resumen", body="volumen general, distribución de pronósticos y principales tiendas/categorías."), unsafe_allow_html=True)
+    c2.markdown(card_style.format(title="Inferencia / Batch CFO", body="consulta un par tienda-producto o genera archivos descargables para finanzas."), unsafe_allow_html=True)
+    c3.markdown(card_style.format(title="Evaluación / KPIs / Feedback", body="revisa errores, detecta productos problemáticos y captura observaciones."), unsafe_allow_html=True)
+    st.caption("El objetivo es que negocio pueda entender dónde venderemos más, dónde falla el modelo y qué productos requieren revisión.")
+
+
+def safe_category_summary(raw_summary: pd.DataFrame, batch_df: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Normalize category forecast summary across local and AWS schemas."""
+    source = raw_summary.copy() if raw_summary is not None and not raw_summary.empty else pd.DataFrame()
+    if source.empty and batch_df is not None and not batch_df.empty:
+        source = batch_df.copy()
+
+    if source.empty:
+        return pd.DataFrame()
+
+    df = source.copy()
+    category_col = first_existing_col(
+        df,
+        ["item_category_name", "category_group", "segment_name", "segment_key", "item_category_id", "category_label"],
+    )
+    if category_col is None:
+        return pd.DataFrame()
+
+    if "total_prediction" in df.columns:
+        df["__value"] = pd.to_numeric(df["total_prediction"], errors="coerce")
+    elif "forecast_units" in df.columns:
+        df["__value"] = pd.to_numeric(df["forecast_units"], errors="coerce")
+    elif "total_forecast" in df.columns:
+        df["__value"] = pd.to_numeric(df["total_forecast"], errors="coerce")
+    elif {"avg_prediction", "n_items"}.issubset(df.columns):
+        df["__value"] = pd.to_numeric(df["avg_prediction"], errors="coerce") * pd.to_numeric(df["n_items"], errors="coerce")
+    elif {"mean_prediction", "n"}.issubset(df.columns):
+        df["__value"] = pd.to_numeric(df["mean_prediction"], errors="coerce") * pd.to_numeric(df["n"], errors="coerce")
+    else:
+        value_col = first_existing_col(df, ["prediction", "forecast", "mean_prediction", "mean_forecast", "avg_prediction", "item_cnt_month"])
+        if value_col is None:
+            return pd.DataFrame()
+        df["__value"] = pd.to_numeric(df[value_col], errors="coerce")
+
+    df["category_display"] = df[category_col].astype(str).map(lambda x: short_text(x, 55))
+    return (
+        df.groupby("category_display", dropna=False, as_index=False)
+        .agg(total_prediction=("__value", "sum"))
+        .sort_values("total_prediction", ascending=False)
     )
 
 
-def _standardize_remote_curves(curves: pd.DataFrame) -> pd.DataFrame:
-    """Normalize curve files from different pipeline versions to long format."""
-    if curves is None or curves.empty or "demand_bucket" not in curves.columns:
-        return pd.DataFrame()
-    df = curves.copy()
-
-    if {"demand_bucket", "series", "mean_value"}.issubset(df.columns):
-        out = df.copy()
-        if "model_id" in out.columns:
-            out["model_key"] = out["model_id"].astype(str)
-        elif "section" in out.columns:
-            out["model_key"] = out["section"].astype(str)
-        else:
-            out["model_key"] = out["series"].astype(str)
-        if "model_name" not in out.columns:
-            out["model_name"] = out["model_key"]
-        return out[["demand_bucket", "model_key", "model_name", "series", "mean_value"]]
-
-    if {"demand_bucket", "real_mean", "pred_mean"}.issubset(df.columns):
-        if "model_id" in df.columns:
-            df["model_key"] = df["model_id"].astype(str)
-        elif "section" in df.columns:
-            df["model_key"] = df["section"].astype(str)
-        else:
-            df["model_key"] = "model"
-        if "model_name" not in df.columns:
-            df["model_name"] = df["model_key"]
-
-        real = df.groupby("demand_bucket", as_index=False).agg(mean_value=("real_mean", "mean"))
-        real["model_key"] = "real"
-        real["model_name"] = "Real"
-        real["series"] = "Real"
-
-        pred = df[["demand_bucket", "model_key", "model_name", "pred_mean"]].copy()
-        pred = pred.rename(columns={"pred_mean": "mean_value"})
-        pred["series"] = pred["model_name"]
-        return pd.concat(
-            [
-                real[["demand_bucket", "model_key", "model_name", "series", "mean_value"]],
-                pred[["demand_bucket", "model_key", "model_name", "series", "mean_value"]],
-            ],
-            ignore_index=True,
-        )
-
-    return pd.DataFrame()
+def render_category_forecast_chart(batch_df: pd.DataFrame) -> None:
+    """Summary chart for top forecast categories, robust to AWS/local schema."""
+    st.markdown("**Categorías con mayor pronóstico**")
+    try:
+        raw_summary = load_forecast_summary_by_category()
+    except Exception:
+        raw_summary = pd.DataFrame()
+    summary = safe_category_summary(raw_summary, batch_df=batch_df)
+    if summary.empty:
+        st.info("No encontré columnas suficientes para graficar categorías.")
+        return
+    plot = summary.head(12).sort_values("total_prediction", ascending=True)
+    fig = px.bar(
+        plot,
+        x="total_prediction",
+        y="category_display",
+        orientation="h",
+        title="Categorías con mayor pronóstico total",
+        labels={"total_prediction": "Pronóstico total", "category_display": "Categoría"},
+    )
+    st.plotly_chart(fig, width="stretch", key="summary_top_categories_safe")
+    st.caption("Lectura: identifica las categorías que concentran el mayor volumen pronosticado.")
 
 
-def render_winner_curve(curves: pd.DataFrame, eval_source: pd.DataFrame, champion: dict[str, Any]) -> None:
-    """Plot only Real vs predicted of the winning model."""
+def _valid_label_value(value: object) -> str | None:
+    """Return a clean model label or None when value is missing/invalid."""
+    if value is None or pd.isna(value):
+        return None
+    text = str(value).strip()
+    if text.lower() in {"", "nan", "none", "null", "nat", "noce"}:
+        return None
+    return text
+
+
+def _row_model_label(row: pd.Series, fallback: str = "Modelo ganador") -> str:
+    """Pick the best model label from a curve row.
+
+    Priority matters because AWS/hybrid outputs sometimes have model_name = NaN
+    but model_id is still valid. This prevents the selector from showing `nan`.
+    """
+    for col in ["model_name", "model_id", "section", "model_scope"]:
+        if col in row.index:
+            label = _valid_label_value(row.get(col))
+            if label is not None:
+                return label
+    return fallback
+
+
+def normalize_curves_for_plot(curves_df: pd.DataFrame, eval_df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize demand curves to long format: demand_bucket, series, mean_value.
+
+    Important fixes:
+    - If model_name is NaN but model_id exists, uses model_id.
+    - Removes/renames invalid labels such as `nan`.
+    - Aggregates duplicated bucket/series pairs to avoid vertical lines.
+    - Keeps the historical model curves when they exist in the curves artifact.
+    """
+    if curves_df is not None and not curves_df.empty:
+        df = curves_df.copy()
+
+        if {"demand_bucket", "series", "mean_value"}.issubset(df.columns):
+            out = df.copy()
+            out["demand_bucket"] = out["demand_bucket"].astype(str)
+            out["series_raw"] = out["series"].astype(str)
+            out["mean_value"] = pd.to_numeric(out["mean_value"], errors="coerce")
+
+            def _curve_label(row: pd.Series) -> str:
+                raw = str(row.get("series_raw", "")).strip()
+                raw_lower = raw.lower()
+                if raw_lower in {"real", "real_mean", "y", "y_mean", "true", "true_mean"}:
+                    return "Real"
+                if raw_lower in {"pred", "prediction", "pred_mean", "forecast", "mean_prediction", "nan", "none", "null", ""}:
+                    return _row_model_label(row, fallback="Modelo ganador")
+                cleaned_raw = _valid_label_value(raw)
+                return cleaned_raw or _row_model_label(row, fallback="Modelo ganador")
+
+            out["series"] = out.apply(_curve_label, axis=1)
+            out = out[["demand_bucket", "series", "mean_value"]].dropna(subset=["mean_value"])
+            out = out[~out["series"].astype(str).str.lower().isin({"nan", "none", "null", ""})]
+            return out.groupby(["demand_bucket", "series"], as_index=False).agg(mean_value=("mean_value", "mean"))
+
+        if {"demand_bucket", "real_mean", "pred_mean"}.issubset(df.columns):
+            # Fill a usable model label row-wise. Do not choose only the first
+            # existing column globally, because model_name may exist but be NaN.
+            df["__model_label"] = df.apply(lambda row: _row_model_label(row, fallback="Modelo ganador"), axis=1)
+            grouped = df.groupby(["demand_bucket", "__model_label"], as_index=False).agg(
+                real_mean=("real_mean", "mean"),
+                pred_mean=("pred_mean", "mean"),
+            )
+            real = grouped.groupby("demand_bucket", as_index=False).agg(mean_value=("real_mean", "mean"))
+            real["series"] = "Real"
+            pred = grouped.rename(columns={"__model_label": "series", "pred_mean": "mean_value"})[
+                ["demand_bucket", "series", "mean_value"]
+            ]
+            out = pd.concat([real[["demand_bucket", "series", "mean_value"]], pred], ignore_index=True)
+            out["demand_bucket"] = out["demand_bucket"].astype(str)
+            out["series"] = out["series"].astype(str)
+            out["mean_value"] = pd.to_numeric(out["mean_value"], errors="coerce")
+            out = out.dropna(subset=["mean_value"])
+            out = out[~out["series"].astype(str).str.lower().isin({"nan", "none", "null", ""})]
+            return out.groupby(["demand_bucket", "series"], as_index=False).agg(mean_value=("mean_value", "mean"))
+
+    if eval_df.empty or not {"y", "prediction"}.issubset(eval_df.columns):
+        return pd.DataFrame(columns=["demand_bucket", "series", "mean_value"])
+
+    local = eval_df.copy()
+    local["demand_bucket"] = pd.cut(local["y"], bins=[-0.1, 0, 1, 3, 7, 20], include_lowest=True).astype(str)
+    agg = local.groupby("demand_bucket", as_index=False, observed=False).agg(
+        real_mean=("y", "mean"),
+        pred_mean=("prediction", "mean"),
+        naive_mean=("naive_prediction", "mean") if "naive_prediction" in local.columns else ("prediction", "mean"),
+    )
+    out = agg.melt(
+        id_vars="demand_bucket",
+        value_vars=[c for c in ["real_mean", "pred_mean", "naive_mean"] if c in agg.columns],
+        var_name="series",
+        value_name="mean_value",
+    )
+    out["series"] = out["series"].replace({"real_mean": "Real", "pred_mean": "Modelo ganador", "naive_mean": "Naive"})
+    return out
+
+def ordered_curve_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Sort curve dataframe by demand bucket order."""
+    out = df.copy()
+    order = out["demand_bucket"].dropna().astype(str).drop_duplicates().tolist()
+    out["demand_bucket"] = pd.Categorical(out["demand_bucket"].astype(str), categories=order, ordered=True)
+    return out.sort_values(["demand_bucket", "series"])
+
+
+def champion_series_name(champion: dict[str, Any], curves_long: pd.DataFrame) -> str | None:
+    """Find champion/current model series in curves."""
+    if curves_long.empty:
+        return None
+    available = set(curves_long["series"].astype(str).unique())
+    candidates = [champion.get("model_id"), champion.get("model_name"), champion.get("display_name"), "Modelo ganador", "Predicho ganador", "champion", "hurdle_hgb", "hybrid_router_v1"]
+    for candidate in candidates:
+        if candidate is not None and str(candidate) in available:
+            return str(candidate)
+    non_real_non_naive = [s for s in available if s.lower() not in {"real", "real_mean", "naive", "naive_lag1"}]
+    return sorted(non_real_non_naive)[0] if non_real_non_naive else None
+
+
+def render_winner_curve(curves_df: pd.DataFrame, eval_df: pd.DataFrame, champion: dict[str, Any]) -> None:
+    """First evaluation curve: Real vs predicted champion/current model only."""
     st.subheader("Real vs predicho del modelo ganador")
-    normalized = _standardize_remote_curves(curves)
-    champion_id = str(champion.get("model_id") or champion.get("model_run_id") or "")
-    champion_name = str(champion.get("model_name") or champion.get("display_name") or "")
-
-    plot_df = pd.DataFrame()
-    if not normalized.empty:
-        real_line = normalized[normalized["series"].astype(str).str.lower().eq("real")].copy()
-        pred_candidates = normalized[normalized["series"].astype(str).str.lower().ne("real")].copy()
-        pred_line = pd.DataFrame()
-        if champion_id:
-            pred_line = pred_candidates[pred_candidates["model_key"].astype(str).eq(champion_id)].copy()
-        if pred_line.empty and champion_name:
-            pred_line = pred_candidates[pred_candidates["model_name"].astype(str).eq(champion_name)].copy()
-        if pred_line.empty:
-            pred_line = pred_candidates[~pred_candidates["model_key"].astype(str).str.contains("naive", case=False, na=False)].head(5).copy()
-        if not real_line.empty and not pred_line.empty:
-            pred_line = pred_line.copy()
-            pred_line["series"] = "Predicho ganador"
-            real_line = real_line.copy()
-            real_line["series"] = "Real"
-            plot_df = pd.concat([real_line, pred_line], ignore_index=True)
-
-    if plot_df.empty:
-        summary = local_demand_curve(eval_source)
-        if summary.empty:
-            st.info("No hay datos suficientes para graficar la curva del ganador.")
-            return
-        plot_df = summary.melt(
-            id_vars="demand_bucket",
-            value_vars=["real_mean", "pred_mean"],
-            var_name="series",
-            value_name="mean_value",
-        )
-        plot_df["series"] = plot_df["series"].map({"real_mean": "Real", "pred_mean": "Predicho ganador"})
-
+    curves_long = normalize_curves_for_plot(curves_df, eval_df)
+    if curves_long.empty:
+        st.info("No hay datos suficientes para graficar la curva del modelo ganador.")
+        return
+    champ = champion_series_name(champion, curves_long)
+    if champ is None:
+        st.info("No pude identificar la serie del modelo ganador.")
+        return
+    plot = curves_long[curves_long["series"].isin(["Real", "real_mean", champ])].copy()
+    plot["series"] = plot["series"].replace({"real_mean": "Real", champ: "Modelo ganador"})
+    plot = ordered_curve_df(plot)
     fig = px.line(
-        plot_df,
+        plot,
         x="demand_bucket",
         y="mean_value",
         color="series",
         markers=True,
         title="Modelo ganador: promedio real vs promedio predicho",
         labels={"demand_bucket": "Rango de demanda real", "mean_value": "Unidades promedio", "series": "Serie"},
-        color_discrete_map={"Real": "#7cc7ff", "Predicho ganador": "#ff6b6b"},
     )
-    st.plotly_chart(fig, width="stretch", key="eval_winner_curve")
-    st.caption("Lectura: si la línea del modelo queda por debajo de Real en alta demanda, hay riesgo de subabasto.")
+    st.plotly_chart(fig, width="stretch", key="winner_curve_final")
+    st.caption("Lectura: si la línea predicha queda por debajo de Real en alta demanda, hay riesgo de subabasto.")
 
 
-def render_model_curve_comparison(curves: pd.DataFrame, eval_source: pd.DataFrame, champion: dict[str, Any]) -> None:
-    """Compare the same demand curve across models with clear labels."""
+def render_model_curve_comparison(curves_df: pd.DataFrame, eval_df: pd.DataFrame) -> None:
+    """Second evaluation curve: Real + selectable model curves."""
     st.subheader("Comparación de curvas por modelo")
-    normalized = _standardize_remote_curves(curves)
+    curves_long = normalize_curves_for_plot(curves_df, eval_df)
+    if curves_long.empty:
+        st.info("No hay datos suficientes para comparar curvas por modelo.")
+        return
 
-    if not normalized.empty:
-        plot_df = normalized.copy()
-        plot_df["series"] = plot_df.apply(
-            lambda row: "Real" if str(row["series"]).lower() == "real" else str(row["model_name"]),
-            axis=1,
-        )
-        real = plot_df[plot_df["series"].eq("Real")].drop_duplicates("demand_bucket")
-        models = plot_df[~plot_df["series"].eq("Real")].copy()
-        if "model_key" in models.columns:
-            priority = models["model_key"].astype(str).str.contains("champion|second|naive|hurdle|incumbent", case=False, na=False)
-            selected = models[priority].copy()
-            if selected.empty:
-                selected_names = models["series"].drop_duplicates().head(4).tolist()
-                selected = models[models["series"].isin(selected_names)]
-            models = selected
-        plot_df = pd.concat([real, models], ignore_index=True)
-    else:
-        summary = local_demand_curve(eval_source)
-        if summary.empty:
-            st.info("No hay datos suficientes para comparar curvas.")
-            return
-        plot_df = summary.melt(
-            id_vars="demand_bucket",
-            value_vars=["real_mean", "pred_mean", "naive_mean"],
-            var_name="series",
-            value_name="mean_value",
-        )
-        plot_df["series"] = plot_df["series"].map({"real_mean": "Real", "pred_mean": "Predicho ganador", "naive_mean": "Naive"})
+    available_models = [
+        s for s in curves_long["series"].dropna().astype(str).drop_duplicates().tolist()
+        if s.lower() not in {"real", "real_mean"}
+    ]
+    # Keep a deterministic readable order, with important models first.
+    priority_tokens = ["hurdle", "hybrid", "incumbent", "lightgbm", "poisson", "specialist", "rolling", "naive"]
+    def _priority(name: str) -> tuple[int, str]:
+        lower = name.lower()
+        for idx, token in enumerate(priority_tokens):
+            if token in lower:
+                return (idx, name)
+        return (len(priority_tokens), name)
+    available_models = sorted(available_models, key=_priority)
+    desired_extra = [m for m in available_models if any(token in m.lower() for token in ["specialist", "recurrent", "poisson", "hgb_poisson"])]
+    if not desired_extra:
+        st.caption("Nota: si no aparecen specialist_recurrent o hgb_poisson en el selector, sus curvas no están guardadas en evaluation_curves_by_model.parquet. El modelo puede aparecer en Registry, pero sin curva no se puede graficar exactamente.")
+
+    selected_models = st.multiselect(
+        "Modelos a mostrar en la comparación",
+        options=available_models,
+        default=available_models,
+        key="eval_curve_model_selector_v3",
+        help="Real siempre se muestra. Selecciona o quita modelos para comparar contra la curva real.",
+    )
+
+    selected_series = ["Real"] + selected_models
+    plot = curves_long[curves_long["series"].isin(selected_series + ["real_mean"])].copy()
+    plot["series"] = plot["series"].replace({"real_mean": "Real"})
+    plot = ordered_curve_df(plot)
 
     fig = px.line(
-        plot_df,
+        plot,
         x="demand_bucket",
         y="mean_value",
         color="series",
         markers=True,
-        title="Comparación: Real vs modelos",
+        title="Comparación: Real vs modelos seleccionados",
         labels={"demand_bucket": "Rango de demanda real", "mean_value": "Unidades promedio", "series": "Serie"},
     )
-    fig.update_layout(legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02))
-    st.plotly_chart(fig, width="stretch", key="eval_model_curve_comparison")
-    st.caption("Lectura: compara el sesgo por rango de demanda. Revisa si el champion mejora al naive y dónde falla.")
+    st.plotly_chart(fig, width="stretch", key="model_curve_comparison_final")
+    st.info(
+        "Cómo leerla: la línea Real es la referencia. Cada modelo seleccionado muestra su promedio predicho por bucket de demanda. "
+        "Entre más cerca esté de Real, mejor calibrado está en ese rango. Usa el selector para aislar naive, LightGBM, Poisson, el especialista recurrente, el router híbrido o el modelo ganador."
+    )
+    render_model_id_legend(selected_models)
+
+
+def render_current_and_naive_curve(curves_df: pd.DataFrame, eval_df: pd.DataFrame, champion: dict[str, Any]) -> None:
+    """Third evaluation curve: Real + current/champion model + naive."""
+    st.subheader("Real vs modelo utilizado y naive")
+    curves_long = normalize_curves_for_plot(curves_df, eval_df)
+    if curves_long.empty:
+        st.info("No hay datos suficientes para graficar modelo utilizado y naive.")
+        return
+    champ = champion_series_name(champion, curves_long)
+    available = curves_long["series"].astype(str).unique().tolist()
+    naive = next((s for s in available if "naive" in s.lower()), None)
+    selected = ["Real"]
+    if champ is not None:
+        selected.append(champ)
+    if naive is not None and naive not in selected:
+        selected.append(naive)
+    plot = curves_long[curves_long["series"].isin(selected + ["real_mean"])].copy()
+    rename = {"real_mean": "Real"}
+    if champ is not None:
+        rename[champ] = "Modelo utilizado"
+    if naive is not None:
+        rename[naive] = "Naive"
+    plot["series"] = plot["series"].replace(rename)
+    plot = ordered_curve_df(plot)
+    fig = px.line(
+        plot,
+        x="demand_bucket",
+        y="mean_value",
+        color="series",
+        markers=True,
+        title="Real vs modelo utilizado y naive",
+        labels={"demand_bucket": "Rango de demanda real", "mean_value": "Unidades promedio", "series": "Serie"},
+    )
+    st.plotly_chart(fig, width="stretch", key="current_vs_naive_curve_final")
+    st.caption("Lectura: compara directamente el modelo utilizado contra el baseline naive usando la línea Real como referencia.")
+
+
+def render_demand_bucket_distribution(eval_df: pd.DataFrame) -> None:
+    """Show number of records by real-demand bucket."""
+    st.subheader("Distribución de registros por rango de demanda real")
+    if eval_df.empty or "y" not in eval_df.columns:
+        st.info("No hay variable real para graficar distribución por rango.")
+        return
+    temp = eval_df.copy()
+    temp["demand_bucket"] = pd.cut(temp["y"], bins=[-0.1, 0, 1, 3, 7, 20], include_lowest=True).astype(str)
+    counts = temp.groupby("demand_bucket", as_index=False, observed=False).agg(n_registros=("y", "size"))
+    fig = px.bar(
+        counts,
+        x="demand_bucket",
+        y="n_registros",
+        title="Número de registros por rango de demanda real",
+        labels={"demand_bucket": "Rango de demanda real", "n_registros": "Número de registros"},
+    )
+    st.plotly_chart(fig, width="stretch", key="demand_bucket_distribution")
+    st.caption("Lectura: permite ver que la mayoría de registros está en demanda cercana a cero, lo que explica por qué un modelo global puede favorecer muchos ceros.")
 
 
 def prepare_segment_table(segment_source: pd.DataFrame, fallback_eval: pd.DataFrame) -> pd.DataFrame:
+    """Build full segment performance table."""
     source = enrich_business_names(segment_source) if segment_source is not None and not segment_source.empty else pd.DataFrame()
     if source.empty:
         source = enrich_business_names(fallback_eval)
-        group_cols = [col for col in ["item_category_id", "item_category_name", "category_group"] if col in source.columns]
+        group_cols = [col for col in ["item_category_id", "item_category_name", "category_group", "segment_key", "segment_name"] if col in source.columns]
         if group_cols and "abs_error" in source.columns:
-            source = (
-                source.groupby(group_cols, dropna=False, as_index=False)
-                .agg(
-                    n=("abs_error", "size"),
-                    rmse=("abs_error", lambda x: float(np.sqrt(np.mean(np.square(x))))),
-                    mae=("abs_error", "mean"),
-                    pred_mean=("prediction", "mean"),
-                    true_mean=("y", "mean") if "y" in source.columns else ("abs_error", "mean"),
-                )
+            source = source.groupby(group_cols, dropna=False, as_index=False).agg(
+                n=("abs_error", "size"),
+                rmse=("abs_error", lambda x: float(np.sqrt(np.mean(np.square(x))))),
+                mae=("abs_error", "mean"),
+                pred_mean=("prediction", "mean"),
+                true_mean=("y", "mean") if "y" in source.columns else ("abs_error", "mean"),
             )
-    sort_col = "rmse" if "rmse" in source.columns else metric_col(source)
+    sort_col = "rmse" if "rmse" in source.columns else metric_col_for_error(source)
     if sort_col:
         source = source.sort_values(sort_col, ascending=False)
-    return source
+    return performance_table(source)
 
 
 def prepare_item_table(item_source: pd.DataFrame, fallback_eval: pd.DataFrame) -> pd.DataFrame:
+    """Build full item performance table."""
     source = enrich_business_names(item_source) if item_source is not None and not item_source.empty else pd.DataFrame()
     if source.empty:
         source = enrich_business_names(fallback_eval)
         group_cols = [col for col in ["item_id", "item_name", "item_category_id", "item_category_name"] if col in source.columns]
         if group_cols and "abs_error" in source.columns:
-            source = (
-                source.groupby(group_cols, dropna=False, as_index=False)
-                .agg(
-                    n=("abs_error", "size"),
-                    rmse=("abs_error", lambda x: float(np.sqrt(np.mean(np.square(x))))),
-                    mae=("abs_error", "mean"),
-                    pred_mean=("prediction", "mean"),
-                    true_mean=("y", "mean") if "y" in source.columns else ("abs_error", "mean"),
-                )
+            source = source.groupby(group_cols, dropna=False, as_index=False).agg(
+                n=("abs_error", "size"),
+                rmse=("abs_error", lambda x: float(np.sqrt(np.mean(np.square(x))))),
+                mae=("abs_error", "mean"),
+                pred_mean=("prediction", "mean"),
+                true_mean=("y", "mean") if "y" in source.columns else ("abs_error", "mean"),
             )
-    sort_col = "rmse" if "rmse" in source.columns else metric_col(source)
+    sort_col = "rmse" if "rmse" in source.columns else metric_col_for_error(source)
     if sort_col:
         source = source.sort_values(sort_col, ascending=False)
-    return source
+    return performance_table(source)
 
 
-def render_full_performance_tables(segment_df: pd.DataFrame, item_df: pd.DataFrame) -> None:
-    st.subheader("Tablas de performance para navegación")
-    st.caption("Usa el buscador nativo de Streamlit o los filtros para revisar cualquier segmento/categoría o producto.")
+def render_full_performance_tables(segment_df: pd.DataFrame, item_df: pd.DataFrame, eval_df: pd.DataFrame) -> None:
+    """Navigable performance tables with filters."""
+    st.subheader("Performance por segmento/categoría y producto")
+    st.caption("Estas tablas son agregadas de performance; por eso no muestran decision_recommendation ni review_reason fila por fila.")
     seg = prepare_segment_table(segment_df, eval_df)
     item = prepare_item_table(item_df, eval_df)
+
     left, right = st.columns(2)
     with left:
         st.markdown("**Todos los segmentos/categorías**")
-        if not seg.empty:
-            seg_filter = st.text_input("Filtrar segmento/categoría", value="", key="eval_segment_filter")
+        if seg.empty:
+            st.info("No hay tabla de segmentos/categorías disponible.")
+        else:
+            seg_filter = st.text_input("Buscar segmento/categoría por ID o nombre", value="", key="performance_segment_filter")
             show = seg.copy()
             if seg_filter.strip():
                 mask = pd.Series(False, index=show.index)
@@ -683,12 +1349,12 @@ def render_full_performance_tables(segment_df: pd.DataFrame, item_df: pd.DataFra
                         mask = mask | show[col].astype(str).str.contains(seg_filter, case=False, na=False)
                 show = show[mask]
             render_dataframe(show, height=430)
-        else:
-            st.info("No hay tabla de segmentos/categorías disponible.")
     with right:
         st.markdown("**Todos los productos**")
-        if not item.empty:
-            item_filter = st.text_input("Filtrar producto", value="", key="eval_item_filter")
+        if item.empty:
+            st.info("No hay tabla de productos disponible.")
+        else:
+            item_filter = st.text_input("Buscar producto por item_id o nombre", value="", key="performance_item_filter")
             show = item.copy()
             if item_filter.strip():
                 mask = pd.Series(False, index=show.index)
@@ -697,54 +1363,106 @@ def render_full_performance_tables(segment_df: pd.DataFrame, item_df: pd.DataFra
                         mask = mask | show[col].astype(str).str.contains(item_filter, case=False, na=False)
                 show = show[mask]
             render_dataframe(show, height=430)
-        else:
-            st.info("No hay tabla de productos disponible.")
 
 
-def render_kpi_graphs(segment_df: pd.DataFrame, item_df: pd.DataFrame) -> None:
+def render_kpi_graphs(segment_df: pd.DataFrame, item_df: pd.DataFrame, eval_df: pd.DataFrame) -> None:
+    """KPI charts with optional shop_id filter and readable labels."""
     st.header("KPIs")
-    seg = prepare_segment_table(segment_df, eval_df)
-    item = prepare_item_table(item_df, eval_df)
+    shop_filter = st.text_input("Filtrar KPIs por shop_id (opcional)", value="", key="kpi_shop_filter")
+    base_eval = eval_df.copy()
+    if shop_filter.strip() and "shop_id" in base_eval.columns:
+        try:
+            shop_id_value = int(shop_filter.strip())
+            base_eval = base_eval[base_eval["shop_id"] == shop_id_value].copy()
+            st.caption(f"KPIs filtrados por shop_id={shop_id_value}.")
+        except ValueError:
+            st.warning("shop_id debe ser numérico. Se muestran KPIs generales.")
+
+    seg = prepare_segment_table(segment_df, base_eval)
+    item = prepare_item_table(item_df, base_eval)
+
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("Categorías con mayor RMSE")
-        if seg.empty:
+        if seg.empty or "rmse" not in seg.columns:
             st.info("No hay datos por categoría.")
         else:
-            mcol = "rmse" if "rmse" in seg.columns else metric_col(seg)
-            plot = seg.sort_values(mcol, ascending=False).head(15).copy()
-            plot["category_display"] = category_display(plot)
+            plot = seg.sort_values("rmse", ascending=False).head(15).copy()
+            plot["category_display"] = category_display_series(plot)
             fig = px.bar(
-                plot.sort_values(mcol, ascending=True),
-                x=mcol,
+                plot.sort_values("rmse", ascending=True),
+                x="rmse",
                 y="category_display",
                 orientation="h",
                 title="Top categorías por RMSE",
-                labels={mcol: "RMSE", "category_display": "Categoría"},
+                labels={"rmse": "RMSE", "category_display": "Categoría"},
             )
             st.plotly_chart(fig, width="stretch", key="kpi_category_rmse_clean")
             render_dataframe(seg, max_rows=100, height=320)
     with col2:
         st.subheader("Productos con mayor RMSE")
-        if item.empty:
+        if item.empty or "rmse" not in item.columns:
             st.info("No hay datos por producto.")
         else:
-            mcol = "rmse" if "rmse" in item.columns else metric_col(item)
-            plot = item.sort_values(mcol, ascending=False).head(15).copy()
-            plot["product_display"] = product_display(plot)
+            plot = item.sort_values("rmse", ascending=False).head(15).copy()
+            plot["product_display"] = product_display_series(plot)
             fig = px.bar(
-                plot.sort_values(mcol, ascending=True),
-                x=mcol,
+                plot.sort_values("rmse", ascending=True),
+                x="rmse",
                 y="product_display",
                 orientation="h",
                 title="Top productos por RMSE",
-                labels={mcol: "RMSE", "product_display": "Producto"},
+                labels={"rmse": "RMSE", "product_display": "Producto"},
             )
             st.plotly_chart(fig, width="stretch", key="kpi_product_rmse_clean")
             render_dataframe(item, max_rows=100, height=320)
 
+    render_shop_kpi_block(base_eval)
+
+
+def render_shop_kpi_block(eval_df: pd.DataFrame) -> None:
+    """Shop-level RMSE chart and searchable table."""
+    st.subheader("Tiendas con mayor RMSE")
+    if eval_df is None or eval_df.empty or not {"shop_id", "prediction", "y"}.issubset(eval_df.columns):
+        st.info("No hay datos suficientes para KPIs por tienda.")
+        return
+    df = enrich_business_names(eval_df).copy()
+    df["error"] = pd.to_numeric(df["prediction"], errors="coerce") - pd.to_numeric(df["y"], errors="coerce")
+    shop = (
+        df.groupby([c for c in ["shop_id", "shop_name"] if c in df.columns], dropna=False, as_index=False)
+        .agg(
+            n=("error", "size"),
+            rmse=("error", lambda x: float(np.sqrt(np.mean(np.square(x))))),
+            mae=("error", lambda x: float(np.mean(np.abs(x)))),
+            pred_mean=("prediction", "mean"),
+            y_mean=("y", "mean"),
+        )
+        .sort_values("rmse", ascending=False)
+    )
+    plot = shop.head(15).sort_values("rmse", ascending=True)
+    y_col = "shop_name" if "shop_name" in plot.columns else "shop_id"
+    fig = px.bar(
+        plot,
+        x="rmse",
+        y=y_col,
+        orientation="h",
+        title="Top tiendas por RMSE",
+        labels={"rmse": "RMSE", y_col: "Tienda"},
+    )
+    st.plotly_chart(fig, width="stretch", key="kpi_shop_rmse_clean")
+    shop_filter = st.text_input("Buscar tienda por shop_id o nombre", value="", key="kpi_shop_table_filter")
+    show = shop.copy()
+    if shop_filter.strip():
+        mask = pd.Series(False, index=show.index)
+        for col in ["shop_id", "shop_name"]:
+            if col in show.columns:
+                mask = mask | show[col].astype(str).str.contains(shop_filter, case=False, na=False)
+        show = show[mask]
+    render_dataframe(show, max_rows=200, height=320)
+
 
 def build_extreme_errors(eval_detail_df: pd.DataFrame, fallback_eval: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Build overestimated and underestimated tables from detailed evaluation."""
     source = eval_detail_df if eval_detail_df is not None and not eval_detail_df.empty else fallback_eval
     if source is None or source.empty:
         return pd.DataFrame(), pd.DataFrame()
@@ -757,7 +1475,7 @@ def build_extreme_errors(eval_detail_df: pd.DataFrame, fallback_eval: pd.DataFra
     df["abs_error"] = df["error_signed"].abs()
     over = df.sort_values("error_signed", ascending=False).head(100)
     under = df.sort_values("error_signed", ascending=True).head(100)
-    return over, under
+    return decision_first_table(over), decision_first_table(under)
 
 # ---------- App layout ----------
 
@@ -771,24 +1489,48 @@ with st.sidebar:
     st.write("RDS writes:", "desactivado" if DISABLE_RDS_WRITES else "activo")
     st.write("Root:", os.getenv("MODELOPS_LOCAL_ROOT", "modelops_outputs"))
 
+TAB_NAMES = ["Resumen", "Inferencia individual", "Batch CFO", "Evaluación", "KPIs", "Feedback", "Model Registry"]
+
+# `st.tabs` computes every tab on every rerun. A segmented/radio navigation keeps
+# the same sections but renders only the selected one, which is much lighter in ECS.
+try:
+    active_tab = st.segmented_control(
+        "Navegación principal",
+        TAB_NAMES,
+        default="Resumen",
+        label_visibility="collapsed",
+        key="main_navigation_section",
+    )
+except Exception:
+    active_tab = st.radio(
+        "Navegación principal",
+        TAB_NAMES,
+        index=0,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="main_navigation_section",
+    )
+
 valid_df = load_valid_data()
 test_features = load_test_features()
 test_pairs = load_test_pairs()
 model_payload = load_model()
 batch_df = load_batch_forecast()
-eval_df = build_local_eval_sample(valid_df, model_payload, batch_df)
+if st.session_state.get("uploaded_batch_dashboard_active") and isinstance(st.session_state.get("uploaded_batch_dashboard_df"), pd.DataFrame):
+    batch_df = enrich_business_names(st.session_state["uploaded_batch_dashboard_df"].copy())
+    st.sidebar.success("Forecast del tablero: archivo cargado")
+    st.sidebar.caption(str(st.session_state.get("uploaded_batch_dashboard_source", "uploaded batch")))
+    if st.sidebar.button("Restaurar forecast ModelOps", key="restore_uploaded_forecast_sidebar"):
+        for _key in ["uploaded_batch_dashboard_active", "uploaded_batch_dashboard_df", "uploaded_batch_dashboard_source"]:
+            st.session_state.pop(_key, None)
+        st.rerun()
 
-TAB_NAMES = ["Resumen", "Inferencia individual", "Batch CFO", "Evaluación", "KPIs", "Feedback", "Model Registry"]
-tab_summary, tab_single, tab_cfo, tab_eval, tab_kpis, tab_feedback, tab_registry = st.tabs(TAB_NAMES)
-
-with tab_summary:
+# Only the evaluation/KPI/feedback sections need the local eval sample.
+# Other sections skip this expensive local inference work.
+eval_df = get_eval_df_cached() if active_tab in {"Evaluación", "KPIs", "Feedback"} else pd.DataFrame()
+if active_tab == "Resumen":
     st.header("Resumen ejecutivo")
-    st.write("Este tablero resume el flujo operativo del producto de datos: consulta individual, batch CFO, evaluación, KPIs, feedback y registry.")
-    help_cols = st.columns(3)
-    help_cols[0].info("**Resumen**: volumen general, distribución de pronósticos y principales tiendas/categorías.")
-    help_cols[1].info("**Inferencia / Batch CFO**: consulta un par tienda-producto o genera archivos descargables para finanzas.")
-    help_cols[2].info("**Evaluación / KPIs / Feedback**: revisa errores, detecta productos problemáticos y captura observaciones.")
-    st.caption("El objetivo es que negocio pueda entender dónde venderemos más, dónde falla el modelo y qué productos requieren revisión.")
+    render_summary_intro_cards()
 
     champion = current_champion()
     metrics = current_metrics()
@@ -828,6 +1570,7 @@ with tab_summary:
         )
         fig = px.bar(top_shops.sort_values("total_forecast"), x="total_forecast", y="shop_name", orientation="h", title="Tiendas con mayor pronóstico total")
         st.plotly_chart(fig, width="stretch", key="summary_top_shops")
+        st.caption("Lectura: tiendas con mayor volumen esperado para priorizar planeación comercial y CFO.")
     with col_b:
         dist = batch_df[["prediction"]].copy()
         dist["prediction_log1p"] = np.log1p(pd.to_numeric(dist["prediction"], errors="coerce").fillna(0).clip(lower=0))
@@ -835,22 +1578,20 @@ with tab_summary:
         x_col = "prediction" if scale == "Original" else "prediction_log1p"
         fig = px.histogram(dist.sample(min(25_000, len(dist)), random_state=42), x=x_col, nbins=60, title="Distribución de pronósticos")
         st.plotly_chart(fig, width="stretch", key="summary_distribution")
+        st.caption("Lectura: la escala Log1p ayuda a observar mejor una distribución muy concentrada cerca de cero.")
 
     col_c, col_d = st.columns(2)
     with col_c:
-        cat_summary = load_forecast_summary_by_category()
-        if not cat_summary.empty:
-            name_col = "item_category_name" if "item_category_name" in cat_summary.columns else "item_category_id"
-            val_col = "total_prediction" if "total_prediction" in cat_summary.columns else "mean_prediction"
-            fig = px.bar(cat_summary.sort_values(val_col, ascending=False).head(12).sort_values(val_col), x=val_col, y=name_col, orientation="h", title="Categorías con mayor pronóstico")
-            st.plotly_chart(fig, width="stretch", key="summary_top_categories")
+        render_category_forecast_chart(batch_df)
     with col_d:
         by_scope = batch_df.groupby("model_scope", dropna=False, as_index=False).agg(n=("prediction", "size"), total_prediction=("prediction", "sum")) if "model_scope" in batch_df.columns else pd.DataFrame()
         if not by_scope.empty:
             fig = px.pie(by_scope, values="n", names="model_scope", title="Cobertura por model_scope")
             st.plotly_chart(fig, width="stretch", key="summary_scope_pie")
+            st.caption("Lectura: muestra qué proporción de predicciones viene del modelo global, segmentado o fallback.")
+            render_model_scope_legend(batch_df["model_scope"])
 
-with tab_single:
+elif active_tab == "Inferencia individual":
     st.header("Inferencia individual")
     st.write("Selecciona con la lista o escribe el ID manualmente.")
     col1, col2 = st.columns(2)
@@ -877,23 +1618,40 @@ with tab_single:
             except Exception as exc:  # noqa: BLE001
                 LOGGER.warning("usage event skipped: %s", exc)
 
-with tab_cfo:
+elif active_tab == "Batch CFO":
     st.header("Batch CFO")
-    with st.expander("¿Qué significa model_scope?"):
-        st.markdown("""
-        `model_scope` indica qué lógica generó el pronóstico: `global` usa el modelo general,
-        `segment:*` usa un modelo especializado, `original_two_stage` usa el diseño original de dos etapas,
-        y `fallback` usa una regla conservadora cuando no hay suficiente historial.
-        """)
+    with st.expander("¿Qué significa model_scope y routing_reason?"):
+        st.markdown(
+            """
+            `model_scope` indica qué componente generó la predicción final. En el router híbrido puede ser:
+
+            - `inactive:no_recent_sales`: regla para producto-tienda sin ventas recientes.
+            - `baseline:naive_recent_demand`: usa señal reciente como `cnt_lag_1`.
+            - `specialist:recurrent_demand`: modelo especialista para demanda recurrente.
+            - `challenger:hurdle_hgb`: modelo Hurdle HGB para demanda baja/intermitente.
+            - `incumbent:lightgbm_two_stage` / `incumbent_two_stage`: modelo LightGBM original de dos etapas.
+
+            `routing_reason` explica la regla histórica usada para enrutar la fila, por ejemplo:
+            `recency>=99_or_rolling_sum_6==0`, `cnt_lag_1>=1` o `rolling_mean_or_nonzero_rate_signal`.
+            """
+        )
 
     scope = st.radio("Alcance", ["Todos los productos de una tienda", "Segmento / categoría", "Catálogo completo"], horizontal=True)
+    selected_category = None
     if scope == "Todos los productos de una tienda":
         selected_shop = choose_id_with_dropdown_and_text(batch_df, "shop_id", "shop_name", "Tienda", "cfo_shop")
         filtered_batch = batch_df[batch_df["shop_id"] == selected_shop].copy() if selected_shop is not None else batch_df.copy()
     elif scope == "Segmento / categoría":
         category_options = sorted(batch_df["item_category_id"].dropna().astype(int).astype(str).unique()) if "item_category_id" in batch_df.columns else []
-        selected_category = st.selectbox("Selecciona item_category_id", category_options)
-        filtered_batch = batch_df[batch_df["item_category_id"].astype("Int64").astype(str) == str(selected_category)].copy() if category_options else batch_df.copy()
+        selected_category = st.selectbox("Selecciona item_category_id / segment_id", category_options)
+        if category_options:
+            category_series = pd.to_numeric(batch_df["item_category_id"], errors="coerce").astype("Int64").astype(str)
+            filtered_batch = batch_df[category_series.eq(str(selected_category))].copy()
+            st.caption(f"Segmento/categoría seleccionado: item_category_id={selected_category}")
+        else:
+            filtered_batch = batch_df.copy()
+            st.info("No hay item_category_id disponible para filtrar por segmento/categoría.")
+        selected_shop = None
     else:
         selected_shop = None
         filtered_batch = batch_df.copy()
@@ -902,7 +1660,11 @@ with tab_cfo:
     c1.metric("Registros", f"{len(filtered_batch):,}")
     c2.metric("Pronóstico total", f"{filtered_batch['prediction'].sum():,.1f}")
     c3.metric("Promedio", f"{filtered_batch['prediction'].mean():.3f}")
-    render_dataframe(visible_forecast_columns(filtered_batch), "Vista previa del archivo CFO", max_rows=1000, height=420)
+    render_decision_help(" en Batch CFO")
+    cfo_table = decision_first_table(visible_forecast_columns(filtered_batch))
+    render_dataframe(cfo_table, "Vista previa del archivo CFO", max_rows=1000, height=420)
+    render_decision_recommendation_legend(cfo_table, "Qué significa la recomendación de decisión en CFO")
+    render_review_reason_legend(cfo_table, "Qué significa cada routing/review reason en CFO")
 
     csv = visible_forecast_columns(filtered_batch).to_csv(index=False).encode("utf-8")
     if st.button("Generar archivo CFO y guardar en S3"):
@@ -910,7 +1672,17 @@ with tab_cfo:
             st.warning("backend.storage.upload_batch_dataframe_to_s3 no está disponible.")
         else:
             try:
-                s3_uri = upload_batch_dataframe_to_s3(filtered_batch, scope=scope, shop_id=selected_shop if scope == "Todos los productos de una tienda" else None)
+                shop_id_for_export = selected_shop if scope == "Todos los productos de una tienda" else None
+                category_id_for_export = selected_category if scope == "Segmento / categoría" else None
+                if upload_cfo_dataframe_partitioned_to_s3 is not None:
+                    s3_uri = upload_cfo_dataframe_partitioned_to_s3(
+                        filtered_batch,
+                        scope=scope,
+                        shop_id=shop_id_for_export,
+                        category_id=category_id_for_export,
+                    )
+                else:
+                    s3_uri = upload_batch_dataframe_to_s3(filtered_batch, scope=scope, shop_id=shop_id_for_export)
                 if insert_batch_export and not DISABLE_RDS_WRITES:
                     insert_batch_export(scope=scope, shop_id=selected_shop if scope == "Todos los productos de una tienda" else None, records_count=len(filtered_batch), total_prediction=float(filtered_batch["prediction"].sum()), s3_uri=s3_uri)
                 st.success("Archivo CFO guardado.")
@@ -925,7 +1697,17 @@ with tab_cfo:
         except Exception:
             st.info("Sin historial disponible.")
 
-with tab_eval:
+    render_uploaded_batch_inference(
+        model_payload=model_payload,
+        enrich_fn=enrich_business_names,
+        visible_fn=visible_forecast_columns,
+        render_dataframe_fn=render_dataframe,
+        upload_batch_dataframe_to_s3=upload_batch_dataframe_to_s3,
+        insert_batch_export=insert_batch_export,
+        disable_rds_writes=DISABLE_RDS_WRITES,
+    )
+
+elif active_tab == "Evaluación":
     st.header("Evaluación")
     c1, c2, c3 = st.columns(3)
     c1.metric("RMSE modelo local", f"{rmse(eval_df['y'], eval_df['prediction']):.4f}")
@@ -935,22 +1717,29 @@ with tab_eval:
     curves = load_evaluation_curves_by_model()
     champion = current_champion()
     render_winner_curve(curves, eval_df, champion)
-    render_model_curve_comparison(curves, eval_df, champion)
+    render_model_curve_comparison(curves, eval_df)
+    render_demand_bucket_distribution(eval_df)
 
-    st.divider()
     segment_perf = load_evaluation_by_segment()
     item_perf = load_evaluation_by_item()
-    render_full_performance_tables(segment_perf, item_perf)
+    render_full_performance_tables(segment_perf, item_perf, eval_df)
 
     with st.expander("Ver muestra local de errores enriquecida"):
-        render_dataframe(visible_forecast_columns(enrich_business_names(eval_df)), max_rows=500, height=420)
+        eval_sample_table = evaluation_detail_table(enrich_business_names(eval_df))
+        render_dataframe(eval_sample_table, max_rows=500, height=420)
 
-with tab_kpis:
+elif active_tab == "KPIs":
     segment_perf = load_evaluation_by_segment()
     item_perf = load_evaluation_by_item()
-    render_kpi_graphs(segment_perf, item_perf)
+    render_kpi_graphs(segment_perf, item_perf, eval_df)
 
-with tab_feedback:
+    render_low_activity_products_table(
+        batch_df,
+        enrich_fn=enrich_business_names,
+        render_dataframe_fn=render_dataframe,
+    )
+
+elif active_tab == "Feedback":
     st.header("Feedback")
     c1, c2 = st.columns(2)
     with c1:
@@ -979,25 +1768,36 @@ with tab_feedback:
 
     eval_detail = load_evaluation_detail()
     over_fallback, under_fallback = build_extreme_errors(eval_detail, eval_df)
+
     over = enrich_business_names(load_overestimated_products())
     if over.empty:
         over = over_fallback
+
     under = enrich_business_names(load_underestimated_products())
     if under.empty:
         under = under_fallback
 
+    render_decision_help(" en Feedback")
+
     st.subheader("100 productos más sobreestimados")
     st.caption("Predicción mayor que el real. Riesgo principal: sobreinventario.")
-    render_dataframe(visible_forecast_columns(enrich_business_names(over)), max_rows=100, height=420)
+    over_table = decision_first_table(enrich_business_names(over))
+    render_dataframe(over_table, max_rows=100, height=420)
 
     st.subheader("100 productos más subestimados")
     st.caption("Predicción menor que el real. Riesgo principal: subabasto.")
-    render_dataframe(visible_forecast_columns(enrich_business_names(under)), max_rows=100, height=420)
+    under_table = decision_first_table(enrich_business_names(under))
+    render_dataframe(under_table, max_rows=100, height=420)
 
     st.subheader("Registros sugeridos para revisión")
-    render_dataframe(visible_forecast_columns(enrich_business_names(load_review_suggestions())), max_rows=100, height=360)
+    review_table = decision_first_table(enrich_business_names(load_review_suggestions()))
+    render_dataframe(review_table, max_rows=100, height=360)
 
-with tab_registry:
+    combined_feedback_explain = pd.concat([over_table, under_table, review_table], ignore_index=True)
+    render_decision_recommendation_legend(combined_feedback_explain, "Qué significa cada decision_recommendation en Feedback")
+    render_review_reason_legend(combined_feedback_explain, "Qué significa cada review_reason en Feedback")
+
+elif active_tab == "Model Registry":
     st.header("Model Registry")
     champion = current_champion()
     metrics = current_metrics()
@@ -1026,8 +1826,31 @@ with tab_registry:
         fig = px.bar(ordered, x="rmse", y="plot_name", orientation="h", title="Modelos entrenados ordenados por RMSE")
         fig.update_yaxes(categoryorder="array", categoryarray=list(reversed(ordered["plot_name"].tolist())))
         st.plotly_chart(fig, width="stretch", key="registry_models")
-        if "model_id" in ordered.columns:
-            ordered["descripción"] = ordered["model_id"].map(lambda x: MODEL_DESCRIPTIONS.get(str(x), "Modelo candidato evaluado contra el mismo validation set."))
+        def _registry_description(row: pd.Series) -> str:
+            for col in ["model_id", "model_name", "model_family"]:
+                if col in row.index:
+                    key = str(row.get(col))
+                    if key in MODEL_DESCRIPTIONS:
+                        return MODEL_DESCRIPTIONS[key]
+                    if key in MODEL_ID_DESCRIPTIONS:
+                        return MODEL_ID_DESCRIPTIONS[key]
+            name = str(row.get("model_name", row.get("model_id", "modelo"))).lower()
+            if "hybrid" in name or "router" in name:
+                return MODEL_DESCRIPTIONS["hybrid_router_v1"]
+            if "lightgbm" in name or "original" in name or "incumbent" in name:
+                return MODEL_DESCRIPTIONS["incumbent_two_stage"]
+            if "poisson" in name:
+                return MODEL_DESCRIPTIONS["hgb_poisson"]
+            if "specialist" in name or "recurrent" in name:
+                return MODEL_DESCRIPTIONS["specialist_recurrent"]
+            if "rolling" in name:
+                return MODEL_DESCRIPTIONS["rolling_mean_3"]
+            if "naive" in name:
+                return MODEL_DESCRIPTIONS["naive_lag1"]
+            if "hurdle" in name or "hgb" in name:
+                return MODEL_DESCRIPTIONS["hurdle_hgb"]
+            return "Modelo candidato evaluado contra el mismo validation set; revisar métricas y curvas para decidir uso operativo."
+        ordered["descripción"] = ordered.apply(_registry_description, axis=1)
         show_cols = [c for c in ["model_id", "model_name", "is_champion", "rmse", "mae", "smape", "wape", "bias", "nonzero_recall", "descripción"] if c in ordered.columns]
         render_dataframe(ordered[show_cols], "Historial de modelos/corridas", height=420)
     else:

@@ -39,3 +39,24 @@ data/modelops/
 
 # Temporary local artifacts
 tmp/
+
+# Local backups generated during app patching
+*.before_*
+frontend/*.before_*
+backend/*.before_*
+
+# Local generated ModelOps outputs
+modelops_outputs/
+modelops_outputs_hybrid/
+
+# Local env files
+config/*.env
+!config/*.example.env
+
+# Python/cache
+__pycache__/
+*.pyc
+.venv/
+
+# Local zip/download artifacts
+*.zip
