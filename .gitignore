@@ -26,3 +26,6 @@ modelops_outputs_hybrid/
 # Caches
 .pytest_cache/
 .streamlit/secrets.toml
+
+# Incoming/raw local files
+data/incoming/
