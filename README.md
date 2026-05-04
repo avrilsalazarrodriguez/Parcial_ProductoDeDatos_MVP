@@ -2,6 +2,14 @@
 
 > MVP de producto de datos para consultar pronósticos mensuales de ventas, generar archivos para negocio/CFO, evaluar modelos, registrar feedback operativo y mantener trazabilidad de ModelOps en AWS.
 
+
+## Aplicación pública
+
+La aplicación desplegada en AWS se puede consultar en:
+
+[http://pfs-mvp-alb-2038135488.us-east-1.elb.amazonaws.com](http://pfs-mvp-alb-2038135488.us-east-1.elb.amazonaws.com)
+
+
 <p align="center">
   <img src="graficasProyecto/apppublica.png" alt="Aplicación pública Streamlit en AWS" width="900">
 </p>
